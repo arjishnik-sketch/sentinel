@@ -1,4 +1,4 @@
-from ..models import Hypothesis
+from ..models import Hypothesis, HypothesisIdentity
 from .authorization import AuthorizationDifferential
 
 
@@ -52,4 +52,10 @@ def hypothesis_from_policy_contradiction(
         confidence=0.90,
         evidence_ids=contradiction.evidence_ids,
         source_ids=(source_id,),
+        identity=HypothesisIdentity(
+            kind="authorization_policy_violation",
+            principal_id=contradiction.principal_id,
+            resource_id=contradiction.resource_id,
+            action=contradiction.action,
+        ),
     )

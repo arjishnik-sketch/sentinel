@@ -29,7 +29,9 @@ def refine_authorization_candidates(
             contradiction
         )
 
-        if hypothesis.id in graph.hypotheses:
+        if graph.find_equivalent_hypothesis(
+            hypothesis.identity
+        ) is not None:
             continue
 
         graph.add_hypothesis(hypothesis)

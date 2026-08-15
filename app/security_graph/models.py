@@ -73,12 +73,28 @@ class AuthorizationObservation:
 
 
 @dataclass(frozen=True)
+class HypothesisIdentity:
+    """
+    Canonical semantic identity for a security hypothesis.
+
+    This is deliberately separate from the hypothesis ID so that
+    independently generated hypotheses can be recognized as the
+    same underlying security claim.
+    """
+    kind: str
+    principal_id: str | None = None
+    resource_id: str | None = None
+    action: str | None = None
+
+
+@dataclass(frozen=True)
 class Hypothesis:
     id: str
     kind: str
     claim: str
     confidence: float
     evidence_ids: tuple[str, ...] = ()
+    identity: HypothesisIdentity | None = None
     source_ids: tuple[str, ...] = ()
     status: str = "OPEN"
 

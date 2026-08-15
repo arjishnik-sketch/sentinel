@@ -7,6 +7,7 @@ from .models import (
     Experiment,
     Evidence,
     Hypothesis,
+    HypothesisIdentity,
     Observation,
     Principal,
     Relationship,
@@ -163,6 +164,25 @@ class SecurityGraph:
 
     def add_hypothesis(self, hypothesis: Hypothesis) -> None:
         self.hypotheses[hypothesis.id] = hypothesis
+
+    def find_equivalent_hypothesis(
+        self,
+        identity: HypothesisIdentity,
+    ) -> Hypothesis | None:
+        """
+        Find an existing hypothesis with the same canonical
+        semantic identity.
+
+        Hypothesis IDs are intentionally ignored here because
+        independently generated hypotheses may use different IDs
+        while representing the same security claim.
+        """
+        for hypothesis in self.hypotheses.values():
+            if hypothesis.identity == identity:
+                return hypothesis
+
+        return None
+
 
     def hypotheses_for(
         self,

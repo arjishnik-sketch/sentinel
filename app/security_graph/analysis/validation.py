@@ -1,6 +1,7 @@
 from ..graph import SecurityGraph
 from ..models import (
     Hypothesis,
+    HypothesisIdentity,
     ValidationJudgment,
 )
 from ..policy.authorization import authorization_policy
@@ -149,6 +150,33 @@ def apply_validation_judgment(
         )
     )
 
+    identity = hypothesis.identity
+
+    if identity is None:
+        experiment = graph.experiments.get(
+            judgment.experiment_id
+        )
+
+        request = (
+            experiment.request
+            if experiment is not None
+            else None
+        )
+
+        if (
+            hypothesis.kind == "authorization_policy_violation"
+            and request is not None
+            and request.principal_id is not None
+            and request.resource_id is not None
+            and request.action is not None
+        ):
+            identity = HypothesisIdentity(
+                kind=hypothesis.kind,
+                principal_id=request.principal_id,
+                resource_id=request.resource_id,
+                action=request.action,
+            )
+
     graph.add_hypothesis(
         type(hypothesis)(
             id=hypothesis.id,
@@ -158,5 +186,6 @@ def apply_validation_judgment(
             evidence_ids=evidence_ids,
             source_ids=hypothesis.source_ids,
             status=status,
+            identity=identity,
         )
     )
