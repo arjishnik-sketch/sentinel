@@ -69,6 +69,7 @@ def judge_authorization_validation(
             experiment_id=experiment_id,
             status="INCONCLUSIVE",
             reason="explicit authorization policy unavailable",
+            contradiction_kind="authorization",
             observed=observation.allowed,
             evidence_ids=observation.evidence_ids,
         )
@@ -82,6 +83,7 @@ def judge_authorization_validation(
                 "fresh authorization behavior matches "
                 "explicit policy"
             ),
+            contradiction_kind="authorization",
             expected=policy.allowed,
             observed=observation.allowed,
             evidence_ids=observation.evidence_ids,
@@ -95,6 +97,7 @@ def judge_authorization_validation(
             "fresh authorization behavior contradicts "
             "explicit policy"
         ),
+        contradiction_kind="authorization",
         expected=policy.allowed,
         observed=observation.allowed,
         evidence_ids=observation.evidence_ids,

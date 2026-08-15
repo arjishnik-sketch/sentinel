@@ -154,6 +154,7 @@ class ValidationJudgment:
     experiment_id: str
     status: str
     reason: str
+    contradiction_kind: str = "authorization"
     expected: bool | None = None
     observed: bool | None = None
     evidence_ids: tuple[str, ...] = ()

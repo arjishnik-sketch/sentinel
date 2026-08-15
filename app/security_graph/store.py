@@ -10,6 +10,8 @@ from .models import (
     Evidence,
     Experiment,
     HttpRequestSpec,
+    Hypothesis,
+    HypothesisIdentity,
     Observation,
     Principal,
     Relationship,
@@ -96,9 +98,21 @@ class GraphStore:
                 hypothesis_id TEXT NOT NULL,
                 status TEXT NOT NULL,
                 reason TEXT NOT NULL,
+                contradiction_kind TEXT NOT NULL DEFAULT 'authorization',
                 expected INTEGER,
                 observed INTEGER,
                 evidence_ids TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS hypotheses (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                claim TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                evidence_ids TEXT NOT NULL,
+                identity TEXT,
+                source_ids TEXT NOT NULL,
+                status TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS experiments (
@@ -127,6 +141,7 @@ class GraphStore:
             self.conn.execute(
                 "DELETE FROM authorization_observations"
             )
+            self.conn.execute("DELETE FROM hypotheses")
             self.conn.execute("DELETE FROM experiments")
             self.conn.execute("DELETE FROM validation_judgments")
 
@@ -255,6 +270,45 @@ class GraphStore:
                     ),
                 )
 
+            for item in graph.hypotheses.values():
+                identity = (
+                    {
+                        "kind": item.identity.kind,
+                        "principal_id": item.identity.principal_id,
+                        "resource_id": item.identity.resource_id,
+                        "action": item.identity.action,
+                    }
+                    if item.identity is not None
+                    else None
+                )
+
+                self.conn.execute(
+                    """
+                    INSERT INTO hypotheses
+                    (
+                        id,
+                        kind,
+                        claim,
+                        confidence,
+                        evidence_ids,
+                        identity,
+                        source_ids,
+                        status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.kind,
+                        item.claim,
+                        item.confidence,
+                        json.dumps(item.evidence_ids),
+                        json.dumps(identity),
+                        json.dumps(item.source_ids),
+                        item.status,
+                    ),
+                )
+
             for item in graph.experiments.values():
                 self.conn.execute(
                     """
@@ -301,14 +355,16 @@ class GraphStore:
             for item in graph.validation_judgments.values():
                 self.conn.execute(
                     "INSERT INTO validation_judgments "
-                    "(experiment_id, hypothesis_id, status, reason, expected, observed, evidence_ids) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    "(experiment_id, hypothesis_id, status, reason, "
+                    "contradiction_kind, expected, observed, evidence_ids) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                     ,
                     (
                         item.experiment_id,
                         item.hypothesis_id,
                         item.status,
                         item.reason,
+                        item.contradiction_kind,
                         None if item.expected is None else int(item.expected),
                         None if item.observed is None else int(item.observed),
                         json.dumps(item.evidence_ids),
@@ -449,6 +505,54 @@ class GraphStore:
             """
             SELECT
                 id,
+                kind,
+                claim,
+                confidence,
+                evidence_ids,
+                identity,
+                source_ids,
+                status
+            FROM hypotheses
+            """
+        ):
+            identity_data = (
+                json.loads(row["identity"])
+                if row["identity"]
+                else None
+            )
+
+            identity = (
+                HypothesisIdentity(
+                    kind=identity_data["kind"],
+                    principal_id=identity_data.get("principal_id"),
+                    resource_id=identity_data.get("resource_id"),
+                    action=identity_data.get("action"),
+                )
+                if identity_data is not None
+                else None
+            )
+
+            graph.add_hypothesis(
+                Hypothesis(
+                    id=row["id"],
+                    kind=row["kind"],
+                    claim=row["claim"],
+                    confidence=row["confidence"],
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
+                    ),
+                    identity=identity,
+                    source_ids=tuple(
+                        json.loads(row["source_ids"])
+                    ),
+                    status=row["status"],
+                )
+            )
+
+        for row in self.conn.execute(
+            """
+            SELECT
+                id,
                 hypothesis_id,
                 kind,
                 description,
@@ -503,7 +607,7 @@ class GraphStore:
 
         for row in self.conn.execute(
             "SELECT experiment_id, hypothesis_id, status, reason, "
-            "expected, observed, evidence_ids "
+            "contradiction_kind, expected, observed, evidence_ids "
             "FROM validation_judgments"
         ):
             graph.add_validation_judgment(
@@ -512,6 +616,7 @@ class GraphStore:
                     experiment_id=row["experiment_id"],
                     status=row["status"],
                     reason=row["reason"],
+                    contradiction_kind=row["contradiction_kind"],
                     expected=(
                         None
                         if row["expected"] is None
