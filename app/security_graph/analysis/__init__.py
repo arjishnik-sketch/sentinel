@@ -5,6 +5,7 @@ from .authorization import (
 from .hypothesis import hypothesis_from_differential
 from .attack_surface import generate_parameter_hypotheses
 from .ranking import rank_hypotheses, score_hypothesis
+from .selection import select_next_hypothesis
 
 __all__ = [
     "AuthorizationDifferential",
@@ -13,4 +14,5 @@ __all__ = [
     "generate_parameter_hypotheses",
     "rank_hypotheses",
     "score_hypothesis",
+    "select_next_hypothesis",
 ]
