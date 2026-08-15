@@ -10,13 +10,17 @@ def ingest_execution_observations(
     """
     Convert execution evidence into explicit graph observations.
 
-    Only evidence that can be interpreted as an actual
-    authorization observation is added.
+    Raw evidence is persisted first so every generated observation
+    retains a resolvable provenance chain.
     """
 
     observations: list[AuthorizationObservation] = []
 
     for evidence in result.evidence:
+        # Preserve the raw execution evidence in the graph.
+        if evidence.id not in graph.evidence:
+            graph.add_evidence(evidence)
+
         observation = authorization_observation_from_evidence(
             evidence
         )
