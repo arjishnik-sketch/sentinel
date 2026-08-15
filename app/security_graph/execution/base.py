@@ -1,16 +1,17 @@
 from abc import ABC, abstractmethod
 
-from ..models import Experiment
+from ..models import ExecutionResult, Experiment
 
 
 class ExperimentExecutor(ABC):
     kind: str
 
     @abstractmethod
-    def execute(self, experiment: Experiment) -> list[str]:
+    def execute(self, experiment: Experiment) -> ExecutionResult:
         """
         Execute a bounded experiment.
 
-        Returns IDs of evidence produced by the execution.
+        Returns a structured execution result containing
+        any evidence produced by the execution.
         """
         raise NotImplementedError

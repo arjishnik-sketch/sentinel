@@ -91,3 +91,11 @@ class Experiment:
     description: str
     status: str = "PLANNED"
     evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    experiment_id: str
+    status: str
+    evidence: tuple[Evidence, ...] = ()
+    metadata: tuple[tuple[str, Any], ...] = ()
