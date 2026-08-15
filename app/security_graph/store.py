@@ -6,6 +6,8 @@ from .graph import SecurityGraph
 from .models import (
     Action,
     Endpoint,
+    Evidence,
+    Observation,
     Principal,
     Relationship,
     Resource,
@@ -58,6 +60,21 @@ class GraphStore:
                 metadata TEXT NOT NULL,
                 PRIMARY KEY (source, relation, target)
             );
+
+            CREATE TABLE IF NOT EXISTS evidence (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                data TEXT NOT NULL,
+                confidence REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS observations (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                data TEXT,
+                evidence_ids TEXT NOT NULL
+            );
             """
         )
         self.conn.commit()
@@ -70,6 +87,8 @@ class GraphStore:
             self.conn.execute("DELETE FROM endpoints")
             self.conn.execute("DELETE FROM sessions")
             self.conn.execute("DELETE FROM relationships")
+            self.conn.execute("DELETE FROM evidence")
+            self.conn.execute("DELETE FROM observations")
 
             for item in graph.principals.values():
                 self.conn.execute(
@@ -130,6 +149,37 @@ class GraphStore:
                         item.relation,
                         item.target,
                         json.dumps(dict(item.metadata)),
+                    ),
+                )
+
+            for item in graph.evidence.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO evidence
+                    (id, source, data, confidence)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.source,
+                        json.dumps(item.data),
+                        item.confidence,
+                    ),
+                )
+
+            for item in graph.observations.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO observations
+                    (id, kind, subject, data, evidence_ids)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.kind,
+                        item.subject,
+                        json.dumps(item.data),
+                        json.dumps(item.evidence_ids),
                     ),
                 )
 
@@ -197,6 +247,38 @@ class GraphStore:
                     relation=row["relation"],
                     target=row["target"],
                     metadata=tuple(sorted(metadata.items())),
+                )
+            )
+
+        for row in self.conn.execute(
+            "SELECT id, source, data, confidence FROM evidence"
+        ):
+            graph.add_evidence(
+                Evidence(
+                    id=row["id"],
+                    source=row["source"],
+                    data=json.loads(row["data"]),
+                    confidence=row["confidence"],
+                )
+            )
+
+        for row in self.conn.execute(
+            """
+            SELECT id, kind, subject, data, evidence_ids
+            FROM observations
+            """
+        ):
+            graph.add_observation(
+                Observation(
+                    id=row["id"],
+                    kind=row["kind"],
+                    subject=row["subject"],
+                    data=json.loads(row["data"])
+                    if row["data"] is not None
+                    else None,
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
+                    ),
                 )
             )
 
