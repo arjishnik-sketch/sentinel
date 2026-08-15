@@ -84,6 +84,20 @@ class Hypothesis:
 
 
 @dataclass(frozen=True)
+class HttpRequestSpec:
+    method: str
+    url: str
+    headers: tuple[tuple[str, str], ...] = ()
+    body: str | None = None
+    timeout: float = 10.0
+    principal_id: str | None = None
+    resource_id: str | None = None
+    action: str | None = None
+    expected_statuses: tuple[int, ...] = ()
+    expected_outcome: str | None = None
+
+
+@dataclass(frozen=True)
 class Experiment:
     id: str
     hypothesis_id: str
@@ -91,6 +105,7 @@ class Experiment:
     description: str
     status: str = "PLANNED"
     evidence_ids: tuple[str, ...] = ()
+    request: HttpRequestSpec | None = None
 
 
 @dataclass(frozen=True)
