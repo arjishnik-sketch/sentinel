@@ -92,6 +92,7 @@ def _execute_experiment(
             evidence.id
             for evidence in result.evidence
         ),
+        request=experiment.request,
     )
 
     graph.add_experiment(completed)

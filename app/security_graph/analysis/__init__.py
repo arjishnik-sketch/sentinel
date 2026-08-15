@@ -2,7 +2,14 @@ from .authorization import (
     AuthorizationDifferential,
     find_authorization_differentials,
 )
-from .hypothesis import hypothesis_from_differential
+from .policy import (
+    AuthorizationPolicyContradiction,
+    find_authorization_policy_contradictions,
+)
+from .hypothesis import (
+    hypothesis_from_differential,
+    hypothesis_from_policy_contradiction,
+)
 from .attack_surface import generate_parameter_hypotheses
 from .ranking import rank_hypotheses, score_hypothesis
 from .selection import select_next_hypothesis
@@ -11,8 +18,11 @@ from .observations import authorization_observation_from_evidence
 
 __all__ = [
     "AuthorizationDifferential",
+    "AuthorizationPolicyContradiction",
+    "find_authorization_policy_contradictions",
     "find_authorization_differentials",
     "hypothesis_from_differential",
+    "hypothesis_from_policy_contradiction",
     "generate_parameter_hypotheses",
     "rank_hypotheses",
     "score_hypothesis",

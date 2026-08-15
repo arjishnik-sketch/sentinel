@@ -1,6 +1,8 @@
 from ..graph import SecurityGraph
 from ..models import Hypothesis
 from .authorization import find_authorization_differentials
+from .hypothesis import hypothesis_from_policy_contradiction
+from .policy import find_authorization_policy_contradictions
 
 
 def refine_authorization_candidates(
@@ -15,6 +17,23 @@ def refine_authorization_candidates(
     )
 
     hypotheses: list[Hypothesis] = []
+
+    # Explicit policy contradictions are stronger than generic
+    # behavioral differentials, so generate a dedicated hypothesis.
+    contradictions = find_authorization_policy_contradictions(
+        graph
+    )
+
+    for contradiction in contradictions:
+        hypothesis = hypothesis_from_policy_contradiction(
+            contradiction
+        )
+
+        if hypothesis.id in graph.hypotheses:
+            continue
+
+        graph.add_hypothesis(hypothesis)
+        hypotheses.append(hypothesis)
 
     for differential in differentials:
         hypothesis_id = (
