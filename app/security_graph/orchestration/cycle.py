@@ -96,11 +96,6 @@ def _execute_experiment(
 
     graph.add_experiment(completed)
 
-    ingest_execution_observations(
-        graph,
-        result,
-    )
-
     return result
 
 
