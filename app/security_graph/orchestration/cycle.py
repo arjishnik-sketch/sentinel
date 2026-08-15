@@ -13,6 +13,7 @@ from ..models import (
 from ..planning import (
     plan_authorization_candidate,
     plan_authorization_recheck,
+    plan_authorization_policy_validation,
 )
 from ..policy import select_principal
 from .observations import ingest_execution_observations
@@ -22,6 +23,15 @@ def _plan_hypothesis(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> Experiment | None:
+    # Policy-violation validation is provenance-driven. It must recover
+    # its principal/request from the originating experiment rather than
+    # selecting an arbitrary principal from graph policy.
+    if hypothesis.kind == "authorization_policy_violation":
+        return plan_authorization_policy_validation(
+            graph,
+            hypothesis,
+        )
+
     principal = select_principal(graph)
 
     if principal is None:
