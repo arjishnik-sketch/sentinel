@@ -8,6 +8,7 @@ from .models import (
     AuthorizationObservation,
     Endpoint,
     Evidence,
+    Experiment,
     Observation,
     Principal,
     Relationship,
@@ -87,6 +88,15 @@ class GraphStore:
                 endpoint_id TEXT,
                 evidence_ids TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS experiments (
+                id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL,
+                evidence_ids TEXT NOT NULL
+            );
             """
         )
         self.conn.commit()
@@ -104,6 +114,7 @@ class GraphStore:
             self.conn.execute(
                 "DELETE FROM authorization_observations"
             )
+            self.conn.execute("DELETE FROM experiments")
 
             for item in graph.principals.values():
                 self.conn.execute(
@@ -226,6 +237,30 @@ class GraphStore:
                         int(item.allowed),
                         item.status_code,
                         item.endpoint_id,
+                        json.dumps(item.evidence_ids),
+                    ),
+                )
+
+            for item in graph.experiments.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO experiments
+                    (
+                        id,
+                        hypothesis_id,
+                        kind,
+                        description,
+                        status,
+                        evidence_ids
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.hypothesis_id,
+                        item.kind,
+                        item.description,
+                        item.status,
                         json.dumps(item.evidence_ids),
                     ),
                 )
@@ -354,6 +389,31 @@ class GraphStore:
                     allowed=bool(row["allowed"]),
                     status_code=row["status_code"],
                     endpoint_id=row["endpoint_id"],
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
+                    ),
+                )
+            )
+
+        for row in self.conn.execute(
+            """
+            SELECT
+                id,
+                hypothesis_id,
+                kind,
+                description,
+                status,
+                evidence_ids
+            FROM experiments
+            """
+        ):
+            graph.add_experiment(
+                Experiment(
+                    id=row["id"],
+                    hypothesis_id=row["hypothesis_id"],
+                    kind=row["kind"],
+                    description=row["description"],
+                    status=row["status"],
                     evidence_ids=tuple(
                         json.loads(row["evidence_ids"])
                     ),
