@@ -9,6 +9,7 @@ from .models import (
     Endpoint,
     Evidence,
     Experiment,
+    HttpRequestSpec,
     Observation,
     Principal,
     Relationship,
@@ -95,7 +96,8 @@ class GraphStore:
                 kind TEXT NOT NULL,
                 description TEXT NOT NULL,
                 status TEXT NOT NULL,
-                evidence_ids TEXT NOT NULL
+                evidence_ids TEXT NOT NULL,
+                request TEXT
             );
             """
         )
@@ -251,9 +253,10 @@ class GraphStore:
                         kind,
                         description,
                         status,
-                        evidence_ids
+                        evidence_ids,
+                        request
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item.id,
@@ -262,6 +265,24 @@ class GraphStore:
                         item.description,
                         item.status,
                         json.dumps(item.evidence_ids),
+                        json.dumps(
+                            {
+                                "method": item.request.method,
+                                "url": item.request.url,
+                                "headers": list(item.request.headers),
+                                "body": item.request.body,
+                                "timeout": item.request.timeout,
+                                "principal_id": item.request.principal_id,
+                                "resource_id": item.request.resource_id,
+                                "action": item.request.action,
+                                "expected_statuses": list(
+                                    item.request.expected_statuses
+                                ),
+                                "expected_outcome": item.request.expected_outcome,
+                            }
+                            if item.request is not None
+                            else None
+                        ),
                     ),
                 )
 
@@ -403,7 +424,8 @@ class GraphStore:
                 kind,
                 description,
                 status,
-                evidence_ids
+                evidence_ids,
+                request
             FROM experiments
             """
         ):
@@ -416,6 +438,36 @@ class GraphStore:
                     status=row["status"],
                     evidence_ids=tuple(
                         json.loads(row["evidence_ids"])
+                    ),
+                    request=(
+                        HttpRequestSpec(
+                            method=request_data["method"],
+                            url=request_data["url"],
+                            headers=tuple(
+                                tuple(item)
+                                for item in request_data["headers"]
+                            ),
+                            body=request_data["body"],
+                            timeout=float(request_data["timeout"]),
+                            principal_id=request_data["principal_id"],
+                            resource_id=request_data["resource_id"],
+                            action=request_data["action"],
+                            expected_statuses=tuple(
+                                request_data["expected_statuses"]
+                            ),
+                            expected_outcome=request_data[
+                                "expected_outcome"
+                            ],
+                        )
+                        if (
+                            request_data := (
+                                json.loads(row["request"])
+                                if row["request"]
+                                else None
+                            )
+                        )
+                        is not None
+                        else None
                     ),
                 )
             )
