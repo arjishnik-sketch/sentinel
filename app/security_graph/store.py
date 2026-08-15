@@ -5,6 +5,7 @@ from pathlib import Path
 from .graph import SecurityGraph
 from .models import (
     Action,
+    AuthorizationObservation,
     Endpoint,
     Evidence,
     Observation,
@@ -75,6 +76,17 @@ class GraphStore:
                 data TEXT,
                 evidence_ids TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS authorization_observations (
+                id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                allowed INTEGER NOT NULL,
+                status_code INTEGER,
+                endpoint_id TEXT,
+                evidence_ids TEXT NOT NULL
+            );
             """
         )
         self.conn.commit()
@@ -89,11 +101,15 @@ class GraphStore:
             self.conn.execute("DELETE FROM relationships")
             self.conn.execute("DELETE FROM evidence")
             self.conn.execute("DELETE FROM observations")
+            self.conn.execute(
+                "DELETE FROM authorization_observations"
+            )
 
             for item in graph.principals.values():
                 self.conn.execute(
                     """
-                    INSERT INTO principals (id, name, kind, roles)
+                    INSERT INTO principals
+                    (id, name, kind, roles)
                     VALUES (?, ?, ?, ?)
                     """,
                     (
@@ -107,7 +123,8 @@ class GraphStore:
             for item in graph.resources.values():
                 self.conn.execute(
                     """
-                    INSERT INTO resources (id, type, name)
+                    INSERT INTO resources
+                    (id, type, name)
                     VALUES (?, ?, ?)
                     """,
                     (item.id, item.type, item.name),
@@ -122,7 +139,8 @@ class GraphStore:
             for item in graph.endpoints.values():
                 self.conn.execute(
                     """
-                    INSERT INTO endpoints (id, method, url)
+                    INSERT INTO endpoints
+                    (id, method, url)
                     VALUES (?, ?, ?)
                     """,
                     (item.id, item.method, item.url),
@@ -131,7 +149,8 @@ class GraphStore:
             for item in graph.sessions.values():
                 self.conn.execute(
                     """
-                    INSERT INTO sessions (id, principal_id)
+                    INSERT INTO sessions
+                    (id, principal_id)
                     VALUES (?, ?)
                     """,
                     (item.id, item.principal_id),
@@ -179,6 +198,34 @@ class GraphStore:
                         item.kind,
                         item.subject,
                         json.dumps(item.data),
+                        json.dumps(item.evidence_ids),
+                    ),
+                )
+
+            for item in graph.authorization_observations.values():
+                self.conn.execute(
+                    """
+                    INSERT INTO authorization_observations
+                    (
+                        id,
+                        principal_id,
+                        resource_id,
+                        action,
+                        allowed,
+                        status_code,
+                        endpoint_id,
+                        evidence_ids
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.principal_id,
+                        item.resource_id,
+                        item.action,
+                        int(item.allowed),
+                        item.status_code,
+                        item.endpoint_id,
                         json.dumps(item.evidence_ids),
                     ),
                 )
@@ -273,9 +320,40 @@ class GraphStore:
                     id=row["id"],
                     kind=row["kind"],
                     subject=row["subject"],
-                    data=json.loads(row["data"])
-                    if row["data"] is not None
-                    else None,
+                    data=(
+                        json.loads(row["data"])
+                        if row["data"] is not None
+                        else None
+                    ),
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
+                    ),
+                )
+            )
+
+        for row in self.conn.execute(
+            """
+            SELECT
+                id,
+                principal_id,
+                resource_id,
+                action,
+                allowed,
+                status_code,
+                endpoint_id,
+                evidence_ids
+            FROM authorization_observations
+            """
+        ):
+            graph.add_authorization_observation(
+                AuthorizationObservation(
+                    id=row["id"],
+                    principal_id=row["principal_id"],
+                    resource_id=row["resource_id"],
+                    action=row["action"],
+                    allowed=bool(row["allowed"]),
+                    status_code=row["status_code"],
+                    endpoint_id=row["endpoint_id"],
                     evidence_ids=tuple(
                         json.loads(row["evidence_ids"])
                     ),

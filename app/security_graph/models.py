@@ -58,3 +58,15 @@ class Observation:
     subject: str
     data: Any = None
     evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AuthorizationObservation:
+    id: str
+    principal_id: str
+    resource_id: str
+    action: str
+    allowed: bool
+    status_code: int | None = None
+    endpoint_id: str | None = None
+    evidence_ids: tuple[str, ...] = ()

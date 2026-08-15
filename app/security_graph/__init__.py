@@ -1,6 +1,7 @@
 from .graph import SecurityGraph
 from .models import (
     Action,
+    AuthorizationObservation,
     Endpoint,
     Evidence,
     Observation,
@@ -12,6 +13,7 @@ from .models import (
 
 __all__ = [
     "Action",
+    "AuthorizationObservation",
     "Endpoint",
     "Evidence",
     "Observation",

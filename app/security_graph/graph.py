@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from .models import (
     Action,
+    AuthorizationObservation,
     Endpoint,
     Evidence,
     Observation,
@@ -22,6 +23,7 @@ class SecurityGraph:
     relationships: set[Relationship] = field(default_factory=set)
     evidence: dict[str, Evidence] = field(default_factory=dict)
     observations: dict[str, Observation] = field(default_factory=dict)
+    authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
 
     def add_principal(self, principal: Principal) -> None:
         self.principals[principal.id] = principal
@@ -114,3 +116,38 @@ class SecurityGraph:
             for observation in self.observations.values()
             if observation.subject == subject
         ]
+
+
+    def add_authorization_observation(
+        self,
+        observation: AuthorizationObservation,
+    ) -> None:
+        self.authorization_observations[observation.id] = observation
+
+    def authorization_observations_for(
+        self,
+        resource_id: str | None = None,
+        principal_id: str | None = None,
+        action: str | None = None,
+    ) -> list[AuthorizationObservation]:
+        results = self.authorization_observations.values()
+
+        if resource_id is not None:
+            results = [
+                item for item in results
+                if item.resource_id == resource_id
+            ]
+
+        if principal_id is not None:
+            results = [
+                item for item in results
+                if item.principal_id == principal_id
+            ]
+
+        if action is not None:
+            results = [
+                item for item in results
+                if item.action == action
+            ]
+
+        return list(results)
