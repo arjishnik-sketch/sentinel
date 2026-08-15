@@ -81,3 +81,13 @@ class Hypothesis:
     evidence_ids: tuple[str, ...] = ()
     source_ids: tuple[str, ...] = ()
     status: str = "OPEN"
+
+
+@dataclass(frozen=True)
+class Experiment:
+    id: str
+    hypothesis_id: str
+    kind: str
+    description: str
+    status: str = "PLANNED"
+    evidence_ids: tuple[str, ...] = ()

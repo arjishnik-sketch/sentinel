@@ -4,6 +4,7 @@ from .models import (
     Action,
     AuthorizationObservation,
     Endpoint,
+    Experiment,
     Evidence,
     Hypothesis,
     Observation,
@@ -26,6 +27,7 @@ class SecurityGraph:
     observations: dict[str, Observation] = field(default_factory=dict)
     authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
     hypotheses: dict[str, Hypothesis] = field(default_factory=dict)
+    experiments: dict[str, Experiment] = field(default_factory=dict)
 
     def add_principal(self, principal: Principal) -> None:
         self.principals[principal.id] = principal
@@ -169,6 +171,31 @@ class SecurityGraph:
             results = [
                 item for item in results
                 if item.kind == kind
+            ]
+
+        if status is not None:
+            results = [
+                item for item in results
+                if item.status == status
+            ]
+
+        return list(results)
+
+
+    def add_experiment(self, experiment: Experiment) -> None:
+        self.experiments[experiment.id] = experiment
+
+    def experiments_for(
+        self,
+        hypothesis_id: str | None = None,
+        status: str | None = None,
+    ) -> list[Experiment]:
+        results = self.experiments.values()
+
+        if hypothesis_id is not None:
+            results = [
+                item for item in results
+                if item.hypothesis_id == hypothesis_id
             ]
 
         if status is not None:
