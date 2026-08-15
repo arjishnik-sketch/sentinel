@@ -99,3 +99,12 @@ class ExecutionResult:
     status: str
     evidence: tuple[Evidence, ...] = ()
     metadata: tuple[tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class WorkflowPlan:
+    id: str
+    workflow: str
+    priority: str
+    interesting: tuple[str, ...] = ()
+    tests: tuple[str, ...] = ()

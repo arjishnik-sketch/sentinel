@@ -12,6 +12,7 @@ from .models import (
     Relationship,
     Resource,
     Session,
+    WorkflowPlan,
 )
 
 
@@ -28,6 +29,7 @@ class SecurityGraph:
     authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
     hypotheses: dict[str, Hypothesis] = field(default_factory=dict)
     experiments: dict[str, Experiment] = field(default_factory=dict)
+    workflow_plans: dict[str, WorkflowPlan] = field(default_factory=dict)
 
     def add_principal(self, principal: Principal) -> None:
         self.principals[principal.id] = principal
@@ -202,6 +204,31 @@ class SecurityGraph:
             results = [
                 item for item in results
                 if item.status == status
+            ]
+
+        return list(results)
+
+
+    def add_workflow_plan(self, plan: WorkflowPlan) -> None:
+        self.workflow_plans[plan.id] = plan
+
+    def workflow_plans_for(
+        self,
+        workflow: str | None = None,
+        priority: str | None = None,
+    ) -> list[WorkflowPlan]:
+        results = self.workflow_plans.values()
+
+        if workflow is not None:
+            results = [
+                item for item in results
+                if item.workflow == workflow
+            ]
+
+        if priority is not None:
+            results = [
+                item for item in results
+                if item.priority == priority
             ]
 
         return list(results)
