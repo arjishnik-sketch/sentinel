@@ -133,9 +133,21 @@ class HypothesisScore:
 
 
 @dataclass(frozen=True)
+class ValidationJudgment:
+    hypothesis_id: str
+    experiment_id: str
+    status: str
+    reason: str
+    expected: bool | None = None
+    observed: bool | None = None
+    evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class InvestigationCycleResult:
     hypothesis_id: str
     experiment_id: str
     execution: ExecutionResult
+    judgment: ValidationJudgment | None = None
     observation_ids: tuple[str, ...] = ()
     new_hypothesis_ids: tuple[str, ...] = ()

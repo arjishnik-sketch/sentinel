@@ -15,6 +15,7 @@ from .models import (
     Relationship,
     Resource,
     Session,
+    ValidationJudgment,
 )
 
 
@@ -90,6 +91,16 @@ class GraphStore:
                 evidence_ids TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS validation_judgments (
+                experiment_id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                expected INTEGER,
+                observed INTEGER,
+                evidence_ids TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS experiments (
                 id TEXT PRIMARY KEY,
                 hypothesis_id TEXT NOT NULL,
@@ -117,6 +128,7 @@ class GraphStore:
                 "DELETE FROM authorization_observations"
             )
             self.conn.execute("DELETE FROM experiments")
+            self.conn.execute("DELETE FROM validation_judgments")
 
             for item in graph.principals.values():
                 self.conn.execute(
@@ -283,6 +295,23 @@ class GraphStore:
                             if item.request is not None
                             else None
                         ),
+                    ),
+                )
+
+            for item in graph.validation_judgments.values():
+                self.conn.execute(
+                    "INSERT INTO validation_judgments "
+                    "(experiment_id, hypothesis_id, status, reason, expected, observed, evidence_ids) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    ,
+                    (
+                        item.experiment_id,
+                        item.hypothesis_id,
+                        item.status,
+                        item.reason,
+                        None if item.expected is None else int(item.expected),
+                        None if item.observed is None else int(item.observed),
+                        json.dumps(item.evidence_ids),
                     ),
                 )
 
@@ -468,6 +497,33 @@ class GraphStore:
                         )
                         is not None
                         else None
+                    ),
+                )
+            )
+
+        for row in self.conn.execute(
+            "SELECT experiment_id, hypothesis_id, status, reason, "
+            "expected, observed, evidence_ids "
+            "FROM validation_judgments"
+        ):
+            graph.add_validation_judgment(
+                ValidationJudgment(
+                    hypothesis_id=row["hypothesis_id"],
+                    experiment_id=row["experiment_id"],
+                    status=row["status"],
+                    reason=row["reason"],
+                    expected=(
+                        None
+                        if row["expected"] is None
+                        else bool(row["expected"])
+                    ),
+                    observed=(
+                        None
+                        if row["observed"] is None
+                        else bool(row["observed"])
+                    ),
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
                     ),
                 )
             )

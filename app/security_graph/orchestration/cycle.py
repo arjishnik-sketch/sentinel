@@ -1,4 +1,5 @@
 from ..analysis import (
+    judge_authorization_validation,
     refine_authorization_candidates,
     select_next_hypothesis,
 )
@@ -169,6 +170,16 @@ def run_investigation_cycle(
         for observation in observations
     )
 
+    judgment = None
+
+    if experiment.kind == "authorization_http_check":
+        judgment = judge_authorization_validation(
+            graph,
+            hypothesis=hypothesis,
+            experiment_id=experiment.id,
+        )
+        graph.add_validation_judgment(judgment)
+
     hypotheses_before = set(graph.hypotheses)
 
     refine_authorization_candidates(graph)
@@ -183,6 +194,7 @@ def run_investigation_cycle(
         hypothesis_id=hypothesis.id,
         experiment_id=experiment.id,
         execution=execution,
+        judgment=judgment,
         observation_ids=observation_ids,
         new_hypothesis_ids=new_hypothesis_ids,
     )

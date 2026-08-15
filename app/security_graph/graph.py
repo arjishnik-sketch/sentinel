@@ -13,6 +13,7 @@ from .models import (
     Resource,
     Session,
     WorkflowPlan,
+    ValidationJudgment,
 )
 
 
@@ -29,6 +30,7 @@ class SecurityGraph:
     authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
     hypotheses: dict[str, Hypothesis] = field(default_factory=dict)
     experiments: dict[str, Experiment] = field(default_factory=dict)
+    validation_judgments: dict[str, ValidationJudgment] = field(default_factory=dict)
     workflow_plans: dict[str, WorkflowPlan] = field(default_factory=dict)
 
     def add_principal(self, principal: Principal) -> None:
@@ -208,6 +210,12 @@ class SecurityGraph:
 
         return list(results)
 
+
+    def add_validation_judgment(
+        self,
+        judgment: ValidationJudgment,
+    ) -> None:
+        self.validation_judgments[judgment.experiment_id] = judgment
 
     def add_workflow_plan(self, plan: WorkflowPlan) -> None:
         self.workflow_plans[plan.id] = plan
