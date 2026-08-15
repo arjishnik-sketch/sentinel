@@ -14,8 +14,14 @@ from .attack_surface import generate_parameter_hypotheses
 from .ranking import rank_hypotheses, score_hypothesis
 from .selection import select_next_hypothesis
 from .refinement import refine_authorization_candidates
-from .observations import authorization_observation_from_evidence
-from .validation import judge_authorization_validation
+from .observations import (
+    authorization_observation_from_evidence,
+    authorization_validation_decision_from_evidence,
+)
+from .validation import (
+    apply_validation_judgment,
+    judge_authorization_validation,
+)
 
 __all__ = [
     "AuthorizationDifferential",
@@ -30,5 +36,7 @@ __all__ = [
     "select_next_hypothesis",
     "refine_authorization_candidates",
     "authorization_observation_from_evidence",
+    "authorization_validation_decision_from_evidence",
+    "apply_validation_judgment",
     "judge_authorization_validation",
 ]

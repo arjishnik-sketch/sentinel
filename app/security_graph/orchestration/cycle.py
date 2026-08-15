@@ -1,4 +1,5 @@
 from ..analysis import (
+    apply_validation_judgment,
     judge_authorization_validation,
     refine_authorization_candidates,
     select_next_hypothesis,
@@ -129,18 +130,6 @@ def run_investigation_cycle(
     if hypothesis is None:
         return None
 
-    existing = [
-        experiment
-        for experiment in graph.experiments.values()
-        if (
-            experiment.hypothesis_id == hypothesis.id
-            and experiment.status == "COMPLETED"
-        )
-    ]
-
-    if existing:
-        return None
-
     experiment = _plan_hypothesis(
         graph,
         hypothesis,
@@ -148,6 +137,14 @@ def run_investigation_cycle(
 
     if experiment is None:
         return None
+
+    existing = graph.experiments.get(experiment.id)
+
+    if existing is not None:
+        if existing.status == "COMPLETED":
+            return None
+
+        experiment = existing
 
     if experiment.id not in graph.experiments:
         graph.add_experiment(experiment)
@@ -179,6 +176,7 @@ def run_investigation_cycle(
             experiment_id=experiment.id,
         )
         graph.add_validation_judgment(judgment)
+        apply_validation_judgment(graph, judgment)
 
     hypotheses_before = set(graph.hypotheses)
 

@@ -45,6 +45,45 @@ def authorization_decision_from_evidence(
     return None
 
 
+
+def authorization_validation_decision_from_evidence(
+    evidence: Evidence,
+) -> bool | None:
+    """
+    Interpret a fresh HTTP validation response conservatively.
+
+    This is intentionally different from the generic authorization
+    decision helper.
+
+    2xx responses are treated as observed authorization success.
+
+    401/403 responses are treated as observed authorization denial.
+
+    Other statuses remain unknown because an HTTP status alone does
+    not establish an authorization decision.
+
+    The raw status is retained on AuthorizationObservation so policy
+    reasoning can separately detect protocol contradictions.
+    """
+
+    data = evidence.data
+
+    if data.get("mode") != "http":
+        return None
+
+    status_code = data.get("status_code")
+
+    if not isinstance(status_code, int):
+        return None
+
+    if 200 <= status_code <= 299:
+        return True
+
+    if status_code in {401, 403}:
+        return False
+
+    return None
+
 def authorization_observation_from_evidence(
     evidence: Evidence,
 ) -> AuthorizationObservation | None:
