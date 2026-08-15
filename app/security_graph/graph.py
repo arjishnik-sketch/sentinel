@@ -5,6 +5,7 @@ from .models import (
     AuthorizationObservation,
     Endpoint,
     Evidence,
+    Hypothesis,
     Observation,
     Principal,
     Relationship,
@@ -24,6 +25,7 @@ class SecurityGraph:
     evidence: dict[str, Evidence] = field(default_factory=dict)
     observations: dict[str, Observation] = field(default_factory=dict)
     authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
+    hypotheses: dict[str, Hypothesis] = field(default_factory=dict)
 
     def add_principal(self, principal: Principal) -> None:
         self.principals[principal.id] = principal
@@ -148,6 +150,31 @@ class SecurityGraph:
             results = [
                 item for item in results
                 if item.action == action
+            ]
+
+        return list(results)
+
+
+    def add_hypothesis(self, hypothesis: Hypothesis) -> None:
+        self.hypotheses[hypothesis.id] = hypothesis
+
+    def hypotheses_for(
+        self,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> list[Hypothesis]:
+        results = self.hypotheses.values()
+
+        if kind is not None:
+            results = [
+                item for item in results
+                if item.kind == kind
+            ]
+
+        if status is not None:
+            results = [
+                item for item in results
+                if item.status == status
             ]
 
         return list(results)

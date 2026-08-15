@@ -70,3 +70,14 @@ class AuthorizationObservation:
     status_code: int | None = None
     endpoint_id: str | None = None
     evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Hypothesis:
+    id: str
+    kind: str
+    claim: str
+    confidence: float
+    evidence_ids: tuple[str, ...] = ()
+    source_ids: tuple[str, ...] = ()
+    status: str = "OPEN"
