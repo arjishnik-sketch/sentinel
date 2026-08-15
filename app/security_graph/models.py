@@ -108,3 +108,10 @@ class WorkflowPlan:
     priority: str
     interesting: tuple[str, ...] = ()
     tests: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class HypothesisScore:
+    hypothesis_id: str
+    score: float
+    reasons: tuple[str, ...] = ()
