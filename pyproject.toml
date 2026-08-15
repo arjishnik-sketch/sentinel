@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-ai"
+version = "1.0.0a1"
+description = "Local AI Bug Bounty Assistant"
+requires-python = ">=3.12"
+
+dependencies = [
+    "rich",
+    "requests",
+    "pyyaml",
+    "python-dotenv"
+]
+
+[project.scripts]
+sentinel = "app.cli:main"
+
+[tool.setuptools]
+packages = ["app"]

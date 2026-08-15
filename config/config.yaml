@@ -1,0 +1,32 @@
+general:
+  model: qwen3:8b
+  timeout: 20
+  workers: 10
+
+pipeline:
+  subfinder: true
+  httpx: true
+  katana: true
+
+analysis:
+  javascript: true
+  endpoint_miner: true
+  tech_detector: true
+  parameter_ranker: true
+  playbooks: true
+
+reports:
+  markdown: true
+  html: false
+  json: true
+
+cache:
+  js: true
+  directory: js_cache
+
+engagements:
+  directory: engagements
+
+logging:
+  level: INFO
+  directory: logs
