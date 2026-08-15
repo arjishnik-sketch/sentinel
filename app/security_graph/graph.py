@@ -58,3 +58,59 @@ class SecurityGraph:
             "evidence": len(self.evidence),
             "observations": len(self.observations),
         }
+
+
+    def relationships_for(self, node_id: str) -> list[Relationship]:
+        return [
+            relationship
+            for relationship in self.relationships
+            if relationship.source == node_id
+            or relationship.target == node_id
+        ]
+
+    def relationships_from(self, node_id: str) -> list[Relationship]:
+        return [
+            relationship
+            for relationship in self.relationships
+            if relationship.source == node_id
+        ]
+
+    def relationships_to(self, node_id: str) -> list[Relationship]:
+        return [
+            relationship
+            for relationship in self.relationships
+            if relationship.target == node_id
+        ]
+
+    def principals_for(self, resource_id: str) -> list[Principal]:
+        principal_ids = {
+            relationship.source
+            for relationship in self.relationships
+            if relationship.target == resource_id
+            and relationship.source in self.principals
+        }
+
+        return [
+            self.principals[principal_id]
+            for principal_id in sorted(principal_ids)
+        ]
+
+    def resources_for(self, principal_id: str) -> list[Resource]:
+        resource_ids = {
+            relationship.target
+            for relationship in self.relationships
+            if relationship.source == principal_id
+            and relationship.target in self.resources
+        }
+
+        return [
+            self.resources[resource_id]
+            for resource_id in sorted(resource_ids)
+        ]
+
+    def observations_for(self, subject: str) -> list[Observation]:
+        return [
+            observation
+            for observation in self.observations.values()
+            if observation.subject == subject
+        ]
