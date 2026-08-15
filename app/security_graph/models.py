@@ -115,3 +115,12 @@ class HypothesisScore:
     hypothesis_id: str
     score: float
     reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class InvestigationCycleResult:
+    hypothesis_id: str
+    experiment_id: str
+    execution: ExecutionResult
+    observation_ids: tuple[str, ...] = ()
+    new_hypothesis_ids: tuple[str, ...] = ()
