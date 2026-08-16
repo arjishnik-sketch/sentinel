@@ -32,10 +32,6 @@ def score_hypothesis(
             reasons=("hypothesis is not open",),
         )
 
-    if hypothesis.kind == "authorization_candidate":
-        score += 0.15
-        reasons.append("authorization candidate")
-
     parameter = None
 
     for evidence_id in hypothesis.evidence_ids:

@@ -184,6 +184,32 @@ class HypothesisScore:
 
 
 @dataclass(frozen=True)
+class ResearchEvaluation:
+    """
+    Capability-specific evaluation of a possible research action.
+
+    Values are bounded in [0.0, 1.0].
+
+    information_gain:
+        Expected reduction in uncertainty produced by the action.
+
+    cost:
+        Expected computational, network, time, or operational cost.
+
+    risk:
+        Expected operational or target-side risk.
+
+    value:
+        Final decision value used by the research controller.
+    """
+    information_gain: float
+    cost: float
+    risk: float
+    value: float
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ResearchCandidate:
     """
     A possible next research action derived from current graph state.
@@ -197,6 +223,7 @@ class ResearchCandidate:
     capability_id: str
     score: float = 0.0
     rationale: tuple[str, ...] = ()
+    evaluation: ResearchEvaluation | None = None
 
 
 @dataclass(frozen=True)

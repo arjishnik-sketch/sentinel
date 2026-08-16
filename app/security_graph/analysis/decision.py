@@ -43,6 +43,11 @@ def generate_research_candidates(
             if not applicable:
                 continue
 
+            evaluation = capability.evaluate(
+                graph,
+                hypothesis,
+            )
+
             candidates.append(
                 ResearchCandidate(
                     id=(
@@ -52,11 +57,13 @@ def generate_research_candidates(
                     hypothesis_id=hypothesis.id,
                     action=capability.action,
                     capability_id=capability.id,
-                    score=hypothesis_score.score,
+                    score=evaluation.value,
                     rationale=tuple(
                         hypothesis_score.reasons
                         + reasons
+                        + evaluation.reasons
                     ),
+                    evaluation=evaluation,
                 )
             )
 

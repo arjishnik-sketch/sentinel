@@ -6,6 +6,7 @@ from .models import (
     Experiment,
     Hypothesis,
     ResearchCandidate,
+    ResearchEvaluation,
     ValidationJudgment,
 )
 from .planning import (
@@ -25,6 +26,12 @@ Planner = Callable[
 Applicability = Callable[
     [SecurityGraph, Hypothesis],
     tuple[bool, tuple[str, ...]],
+]
+
+
+Evaluation = Callable[
+    [SecurityGraph, Hypothesis],
+    "ResearchEvaluation",
 ]
 
 
@@ -54,6 +61,7 @@ class ResearchCapability:
     action: str
     executor_kind: str
     applicable: Applicability
+    evaluate_fn: Evaluation
     planner: Planner
     judge_fn: Judge | None = None
 
@@ -63,6 +71,16 @@ class ResearchCapability:
         hypothesis: Hypothesis,
     ) -> tuple[bool, tuple[str, ...]]:
         return self.applicable(
+            graph,
+            hypothesis,
+        )
+
+    def evaluate(
+        self,
+        graph: SecurityGraph,
+        hypothesis: Hypothesis,
+    ) -> ResearchEvaluation:
+        return self.evaluate_fn(
             graph,
             hypothesis,
         )
@@ -102,6 +120,57 @@ def _judge_policy_validation(
         graph,
         hypothesis=hypothesis,
         experiment_id=experiment.id,
+    )
+
+
+# ============================================================
+# Default research valuation
+# ============================================================
+
+def _default_research_evaluation(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> ResearchEvaluation:
+    """
+    Conservative baseline valuation.
+
+    Capabilities may override this with domain-specific reasoning.
+    The decision engine itself never needs to know the domain.
+    """
+
+    evidence_count = len(hypothesis.evidence_ids)
+
+    information_gain = (
+        0.80
+        if evidence_count == 0
+        else 0.65
+        if evidence_count == 1
+        else 0.45
+    )
+
+    cost = 0.10
+    risk = 0.05
+
+    value = max(
+        0.0,
+        min(
+            1.0,
+            information_gain
+            - (0.35 * cost)
+            - (0.50 * risk),
+        ),
+    )
+
+    return ResearchEvaluation(
+        information_gain=information_gain,
+        cost=cost,
+        risk=risk,
+        value=value,
+        reasons=(
+            "fresh execution can reduce unresolved uncertainty",
+            "bounded capability cost",
+            "low baseline operational risk",
+        ),
     )
 
 
@@ -402,6 +471,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="test_authorization_candidate",
         executor_kind="authorization_candidate_check",
         applicable=_authorization_candidate_applicable,
+        evaluate_fn=_default_research_evaluation,
         planner=_plan_authorization_candidate,
     )
 )
@@ -412,6 +482,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="recheck_authorization",
         executor_kind="authorization_recheck",
         applicable=_differential_recheck_applicable,
+        evaluate_fn=_default_research_evaluation,
         planner=_plan_authorization_recheck,
     )
 )
@@ -422,6 +493,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="validate_hypothesis",
         executor_kind="authorization_http_check",
         applicable=_policy_validation_applicable,
+        evaluate_fn=_default_research_evaluation,
         planner=_plan_policy_validation,
         judge_fn=_judge_policy_validation,
     )
