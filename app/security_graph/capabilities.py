@@ -350,24 +350,50 @@ def _evaluate_policy_validation(
         hypothesis,
     )
 
-    if research_state.has_prior_research:
-        information_gain = 0.20
-
-        reasons = (
-            "prior research already produced evidence "
-            "about this hypothesis",
-            "additional validation has lower marginal "
-            "information gain",
-            "low bounded validation cost",
-            "low baseline operational risk",
-        )
-    else:
+    if research_state.research_depth == 0:
         information_gain = 0.88
 
         reasons = (
             "fresh validation directly tests an explicit "
             "policy contradiction",
             "high expected uncertainty reduction",
+            "no prior validation attempt exists",
+            "low bounded validation cost",
+            "low baseline operational risk",
+        )
+
+    elif research_state.residual_uncertainty >= 0.75:
+        information_gain = 0.20
+
+        reasons = (
+            "prior research did not resolve the hypothesis",
+            "substantial residual uncertainty remains",
+            "additional validation retains meaningful "
+            "marginal information gain",
+            "low bounded validation cost",
+            "low baseline operational risk",
+        )
+
+    elif research_state.residual_uncertainty >= 0.40:
+        information_gain = 0.14
+
+        reasons = (
+            "prior research partially constrained the hypothesis",
+            "residual uncertainty remains",
+            "additional validation has diminishing "
+            "marginal information gain",
+            "low bounded validation cost",
+            "low baseline operational risk",
+        )
+
+    else:
+        information_gain = 0.08
+
+        reasons = (
+            "prior research substantially resolved the hypothesis",
+            "low residual uncertainty remains",
+            "additional validation has low marginal "
+            "information gain",
             "low bounded validation cost",
             "low baseline operational risk",
         )

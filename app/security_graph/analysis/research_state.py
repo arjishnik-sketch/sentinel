@@ -39,6 +39,87 @@ class ResearchState:
     def unresolved(self) -> bool:
         return self.current_status == "OPEN"
 
+    @property
+    def research_depth(self) -> int:
+        """
+        Number of completed research attempts contributing to the
+        current hypothesis state.
+        """
+
+        return self.completed_attempts
+
+    @property
+    def judgment_resolution(self) -> float:
+        """
+        Structural measure of how consistently prior judgments resolve.
+
+        1.0 means all recorded judgments point in the same direction.
+        0.0 means there is an even split between opposing judgments.
+
+        Inconclusive judgments reduce resolution.
+        """
+
+        if self.judgment_count == 0:
+            return 0.0
+
+        decisive = (
+            self.supporting_judgments
+            + self.contradicting_judgments
+        )
+
+        if decisive == 0:
+            return 0.0
+
+        agreement = abs(
+            self.supporting_judgments
+            - self.contradicting_judgments
+        ) / decisive
+
+        decisive_ratio = (
+            decisive / self.judgment_count
+        )
+
+        return max(
+            0.0,
+            min(
+                1.0,
+                agreement * decisive_ratio,
+            ),
+        )
+
+    @property
+    def residual_uncertainty(self) -> float:
+        """
+        Deterministic structural uncertainty signal.
+
+        This is not a probability of truth. It represents how much
+        unresolved research signal remains in the current graph state.
+        """
+
+        if self.judgment_count == 0:
+            return 1.0
+
+        resolution = self.judgment_resolution
+
+        uncertainty = (
+            1.0 - resolution
+        )
+
+        if self.inconclusive_judgments:
+            uncertainty = max(
+                uncertainty,
+                self.inconclusive_judgments
+                / self.judgment_count,
+            )
+
+        return max(
+            0.0,
+            min(
+                1.0,
+                uncertainty,
+            ),
+        )
+
 
 def build_research_state(
     graph: SecurityGraph,
