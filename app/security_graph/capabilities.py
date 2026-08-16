@@ -350,7 +350,10 @@ def _evaluate_policy_validation(
         hypothesis,
     )
 
-    if research_state.research_depth == 0:
+    if (
+        research_state.research_depth == 0
+        and research_state.judgment_count == 0
+    ):
         information_gain = 0.88
 
         reasons = (
