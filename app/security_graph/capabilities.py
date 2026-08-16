@@ -269,32 +269,23 @@ def _judge_policy_validation(
 
 
 # ============================================================
-# Default research valuation
+# Capability-owned research valuation
 # ============================================================
 
-def _default_research_evaluation(
-    graph: SecurityGraph,
-    hypothesis: Hypothesis,
+def _research_evaluation(
+    *,
+    information_gain: float,
+    cost: float,
+    risk: float,
+    reasons: tuple[str, ...],
 ) -> ResearchEvaluation:
     """
-    Conservative baseline valuation.
+    Convert capability-owned research characteristics into a
+    deterministic bounded research value.
 
-    Capabilities may override this with domain-specific reasoning.
-    The decision engine itself never needs to know the domain.
+    The decision engine does not know this formula or the domain.
+    Capabilities own the characteristics of their research action.
     """
-
-    evidence_count = len(hypothesis.evidence_ids)
-
-    information_gain = (
-        0.80
-        if evidence_count == 0
-        else 0.65
-        if evidence_count == 1
-        else 0.45
-    )
-
-    cost = 0.10
-    risk = 0.05
 
     value = max(
         0.0,
@@ -311,9 +302,57 @@ def _default_research_evaluation(
         cost=cost,
         risk=risk,
         value=value,
+        reasons=reasons,
+    )
+
+
+def _evaluate_candidate_check(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> ResearchEvaluation:
+    return _research_evaluation(
+        information_gain=0.60,
+        cost=0.20,
+        risk=0.05,
         reasons=(
-            "fresh execution can reduce unresolved uncertainty",
-            "bounded capability cost",
+            "candidate check can establish whether an "
+            "authorization candidate is reproducible",
+            "bounded HTTP validation cost",
+            "low baseline operational risk",
+        ),
+    )
+
+
+def _evaluate_differential_recheck(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> ResearchEvaluation:
+    return _research_evaluation(
+        information_gain=0.72,
+        cost=0.20,
+        risk=0.05,
+        reasons=(
+            "differential recheck can distinguish authorization "
+            "behavior across principals or contexts",
+            "moderate validation cost",
+            "low baseline operational risk",
+        ),
+    )
+
+
+def _evaluate_policy_validation(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> ResearchEvaluation:
+    return _research_evaluation(
+        information_gain=0.88,
+        cost=0.10,
+        risk=0.05,
+        reasons=(
+            "fresh validation directly tests an explicit policy "
+            "contradiction",
+            "high expected uncertainty reduction",
+            "low bounded validation cost",
             "low baseline operational risk",
         ),
     )
@@ -616,7 +655,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="test_authorization_candidate",
         executor_kind="authorization_candidate_check",
         applicable=_authorization_candidate_applicable,
-        evaluate_fn=_default_research_evaluation,
+        evaluate_fn=_evaluate_candidate_check,
         planner=_plan_authorization_candidate,
         observe_fn=_observe_authorization,
         refine_fn=_refine_authorization,
@@ -629,7 +668,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="recheck_authorization",
         executor_kind="authorization_recheck",
         applicable=_differential_recheck_applicable,
-        evaluate_fn=_default_research_evaluation,
+        evaluate_fn=_evaluate_differential_recheck,
         planner=_plan_authorization_recheck,
         observe_fn=_observe_authorization,
         refine_fn=_refine_authorization,
@@ -642,7 +681,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         action="validate_hypothesis",
         executor_kind="authorization_http_check",
         applicable=_policy_validation_applicable,
-        evaluate_fn=_default_research_evaluation,
+        evaluate_fn=_evaluate_policy_validation,
         planner=_plan_policy_validation,
         observe_fn=_observe_authorization,
         judge_fn=_judge_policy_validation,
