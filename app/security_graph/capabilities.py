@@ -24,6 +24,7 @@ from .analysis.observations import (
     authorization_validation_decision_from_evidence,
 )
 from .analysis.refinement import refine_authorization_candidates
+from .analysis.research_state import build_research_state
 
 
 Planner = Callable[
@@ -344,20 +345,19 @@ def _evaluate_policy_validation(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> ResearchEvaluation:
-    previous_judgments = [
-        judgment
-        for judgment in graph.validation_judgments.values()
-        if judgment.hypothesis_id == hypothesis.id
-    ]
+    research_state = build_research_state(
+        graph,
+        hypothesis,
+    )
 
-    if previous_judgments:
+    if research_state.has_prior_research:
         information_gain = 0.20
 
         reasons = (
-            "previous validation already produced evidence "
+            "prior research already produced evidence "
             "about this hypothesis",
-            "repeat validation has reduced expected uncertainty",
-            "additional validation has lower marginal information gain",
+            "additional validation has lower marginal "
+            "information gain",
             "low bounded validation cost",
             "low baseline operational risk",
         )
@@ -365,8 +365,8 @@ def _evaluate_policy_validation(
         information_gain = 0.88
 
         reasons = (
-            "fresh validation directly tests an explicit policy "
-            "contradiction",
+            "fresh validation directly tests an explicit "
+            "policy contradiction",
             "high expected uncertainty reduction",
             "low bounded validation cost",
             "low baseline operational risk",
