@@ -1,9 +1,9 @@
 from ..analysis import (
     apply_validation_judgment,
+    choose_research_decision,
     judge_authorization_validation,
     materialize_confirmed_findings,
     refine_authorization_candidates,
-    select_next_hypothesis,
 )
 from ..execution import ExecutorRegistry
 from ..graph import SecurityGraph
@@ -126,10 +126,22 @@ def run_investigation_cycle(
     Reasoning/refinement remains a separate stage.
     """
 
-    hypothesis = select_next_hypothesis(graph)
+    research_decision = choose_research_decision(
+        graph,
+    )
+
+    if research_decision is None:
+        return None
+
+    hypothesis = graph.hypotheses.get(
+        research_decision.hypothesis_id
+    )
 
     if hypothesis is None:
-        return None
+        raise ValueError(
+            "Research decision references a missing hypothesis: "
+            f"{research_decision.hypothesis_id}"
+        )
 
     experiment = _plan_hypothesis(
         graph,
@@ -197,6 +209,7 @@ def run_investigation_cycle(
         hypothesis_id=hypothesis.id,
         experiment_id=experiment.id,
         execution=execution,
+        research_decision=research_decision,
         judgment=judgment,
         observation_ids=observation_ids,
         new_hypothesis_ids=new_hypothesis_ids,

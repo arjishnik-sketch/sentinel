@@ -16,6 +16,10 @@ from .findings import (
     materialize_confirmed_findings,
 )
 from .ranking import rank_hypotheses, score_hypothesis
+from .decision import (
+    generate_research_candidates,
+    choose_research_decision,
+)
 from .selection import select_next_hypothesis
 from .refinement import refine_authorization_candidates
 from .observations import (
@@ -39,6 +43,8 @@ __all__ = [
     "materialize_confirmed_findings",
     "rank_hypotheses",
     "score_hypothesis",
+    "generate_research_candidates",
+    "choose_research_decision",
     "select_next_hypothesis",
     "refine_authorization_candidates",
     "authorization_observation_from_evidence",

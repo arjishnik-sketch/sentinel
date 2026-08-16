@@ -184,6 +184,39 @@ class HypothesisScore:
 
 
 @dataclass(frozen=True)
+class ResearchCandidate:
+    """
+    A possible next research action derived from current graph state.
+
+    The candidate is deliberately separate from Experiment. A candidate
+    represents a research decision before concrete execution details
+    such as URLs, requests, credentials, or tool arguments are resolved.
+    """
+    id: str
+    hypothesis_id: str
+    action: str
+    executor_kind: str | None = None
+    score: float = 0.0
+    rationale: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResearchDecision:
+    """
+    The controller's explicit choice of the next research action.
+
+    This records not only what Sentinel chose, but why it chose it.
+    """
+    candidate_id: str
+    hypothesis_id: str
+    action: str
+    executor_kind: str | None
+    score: float
+    rationale: tuple[str, ...] = ()
+    rejected_candidate_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ValidationJudgment:
     hypothesis_id: str
     experiment_id: str
@@ -200,6 +233,7 @@ class InvestigationCycleResult:
     hypothesis_id: str
     experiment_id: str
     execution: ExecutionResult
+    research_decision: ResearchDecision | None = None
     judgment: ValidationJudgment | None = None
     observation_ids: tuple[str, ...] = ()
     new_hypothesis_ids: tuple[str, ...] = ()
