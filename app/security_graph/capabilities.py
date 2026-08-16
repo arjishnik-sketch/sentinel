@@ -344,17 +344,39 @@ def _evaluate_policy_validation(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> ResearchEvaluation:
-    return _research_evaluation(
-        information_gain=0.88,
-        cost=0.10,
-        risk=0.05,
-        reasons=(
+    previous_judgments = [
+        judgment
+        for judgment in graph.validation_judgments.values()
+        if judgment.hypothesis_id == hypothesis.id
+    ]
+
+    if previous_judgments:
+        information_gain = 0.20
+
+        reasons = (
+            "previous validation already produced evidence "
+            "about this hypothesis",
+            "repeat validation has reduced expected uncertainty",
+            "additional validation has lower marginal information gain",
+            "low bounded validation cost",
+            "low baseline operational risk",
+        )
+    else:
+        information_gain = 0.88
+
+        reasons = (
             "fresh validation directly tests an explicit policy "
             "contradiction",
             "high expected uncertainty reduction",
             "low bounded validation cost",
             "low baseline operational risk",
-        ),
+        )
+
+    return _research_evaluation(
+        information_gain=information_gain,
+        cost=0.10,
+        risk=0.05,
+        reasons=reasons,
     )
 
 
