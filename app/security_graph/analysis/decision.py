@@ -42,7 +42,7 @@ def generate_research_candidates(
                     id=f"candidate:validate:{hypothesis.id}",
                     hypothesis_id=hypothesis.id,
                     action="validate_hypothesis",
-                    executor_kind="authorization_http_check",
+                    capability_id="authorization.policy_validation",
                     score=min(score.score + 0.05, 1.0),
                     rationale=tuple(
                         rationale
@@ -61,7 +61,7 @@ def generate_research_candidates(
                     id=f"candidate:recheck:{hypothesis.id}",
                     hypothesis_id=hypothesis.id,
                     action="recheck_authorization",
-                    executor_kind="authorization_http_check",
+                    capability_id="authorization.policy_validation",
                     score=score.score,
                     rationale=tuple(
                         rationale
@@ -80,7 +80,7 @@ def generate_research_candidates(
                     id=f"candidate:check:{hypothesis.id}",
                     hypothesis_id=hypothesis.id,
                     action="test_authorization_candidate",
-                    executor_kind="authorization_http_check",
+                    capability_id="authorization.policy_validation",
                     score=score.score,
                     rationale=tuple(
                         rationale
@@ -121,7 +121,7 @@ def choose_research_decision(
         candidate_id=selected.id,
         hypothesis_id=selected.hypothesis_id,
         action=selected.action,
-        executor_kind=selected.executor_kind,
+        capability_id=selected.capability_id,
         score=selected.score,
         rationale=selected.rationale,
         rejected_candidate_ids=tuple(

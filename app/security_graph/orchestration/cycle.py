@@ -5,6 +5,7 @@ from ..analysis import (
     materialize_confirmed_findings,
     refine_authorization_candidates,
 )
+from ..capabilities import DEFAULT_RESEARCH_CAPABILITIES
 from ..execution import ExecutorRegistry
 from ..graph import SecurityGraph
 from ..models import (
@@ -20,56 +21,6 @@ from ..planning import (
 )
 from ..policy import select_principal
 from .observations import ingest_execution_observations
-
-
-def _plan_hypothesis(
-    graph: SecurityGraph,
-    hypothesis: Hypothesis,
-) -> Experiment | None:
-    # Policy-violation validation is provenance-driven. It must recover
-    # its principal/request from the originating experiment rather than
-    # selecting an arbitrary principal from graph policy.
-    if hypothesis.kind == "authorization_policy_violation":
-        return plan_authorization_policy_validation(
-            graph,
-            hypothesis,
-        )
-
-    principal = select_principal(graph)
-
-    if principal is None:
-        return None
-
-    if hypothesis.kind == "authorization_candidate":
-        return plan_authorization_candidate(
-            hypothesis,
-            principal_id=principal.id,
-        )
-
-    if hypothesis.kind == "authorization_differential":
-        prefix = "hyp:diff:"
-
-        if not hypothesis.id.startswith(prefix):
-            return None
-
-        remainder = hypothesis.id[len(prefix):]
-
-        if ":" not in remainder:
-            return None
-
-        resource_id, action = remainder.rsplit(":", 1)
-
-        if not resource_id or not action:
-            return None
-
-        return plan_authorization_recheck(
-            hypothesis,
-            resource_id=resource_id,
-            action=action,
-            principal_id=principal.id,
-        )
-
-    return None
 
 
 def _execute_experiment(
@@ -143,9 +94,18 @@ def run_investigation_cycle(
             f"{research_decision.hypothesis_id}"
         )
 
-    experiment = _plan_hypothesis(
+    if not DEFAULT_RESEARCH_CAPABILITIES.supports(
+        research_decision.capability_id
+    ):
+        raise ValueError(
+            "Research decision selected an unavailable capability: "
+            f"{research_decision.capability_id}"
+        )
+
+    experiment = DEFAULT_RESEARCH_CAPABILITIES.plan(
         graph,
         hypothesis,
+        research_decision.capability_id,
     )
 
     if experiment is None:

@@ -188,14 +188,13 @@ class ResearchCandidate:
     """
     A possible next research action derived from current graph state.
 
-    The candidate is deliberately separate from Experiment. A candidate
-    represents a research decision before concrete execution details
-    such as URLs, requests, credentials, or tool arguments are resolved.
+    The candidate describes WHAT Sentinel wants to accomplish.
+    Concrete execution details belong to the capability layer.
     """
     id: str
     hypothesis_id: str
     action: str
-    executor_kind: str | None = None
+    capability_id: str
     score: float = 0.0
     rationale: tuple[str, ...] = ()
 
@@ -205,12 +204,13 @@ class ResearchDecision:
     """
     The controller's explicit choice of the next research action.
 
-    This records not only what Sentinel chose, but why it chose it.
+    This records what Sentinel chose and why without coupling the
+    reasoning layer directly to a concrete executor implementation.
     """
     candidate_id: str
     hypothesis_id: str
     action: str
-    executor_kind: str | None
+    capability_id: str
     score: float
     rationale: tuple[str, ...] = ()
     rejected_candidate_ids: tuple[str, ...] = ()

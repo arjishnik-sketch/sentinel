@@ -35,3 +35,9 @@ __all__ = [
     "SecurityGraph",
     "Session",
 ]
+
+from .capabilities import (
+    DEFAULT_RESEARCH_CAPABILITIES,
+    ResearchCapability,
+    ResearchCapabilityRegistry,
+)
