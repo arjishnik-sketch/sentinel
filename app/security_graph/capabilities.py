@@ -3,8 +3,11 @@ from typing import Callable
 
 from .graph import SecurityGraph
 from .models import (
+    ExecutionResult,
     Experiment,
     Hypothesis,
+    AuthorizationObservation,
+    Observation,
     ResearchCandidate,
     ResearchEvaluation,
     ValidationJudgment,
@@ -16,6 +19,11 @@ from .planning import (
 )
 from .policy import select_principal
 from .validation_core import judge_authorization_validation
+from .analysis.observations import (
+    authorization_observation_from_evidence,
+    authorization_validation_decision_from_evidence,
+)
+from .analysis.refinement import refine_authorization_candidates
 
 
 Planner = Callable[
@@ -35,9 +43,19 @@ Evaluation = Callable[
 ]
 
 
+Observe = Callable[
+    [SecurityGraph, "ExecutionResult"],
+    tuple["Observation", ...],
+]
+
 Judge = Callable[
     [SecurityGraph, Hypothesis, Experiment],
     ValidationJudgment | None,
+]
+
+Refine = Callable[
+    [SecurityGraph, Hypothesis, tuple["Observation", ...]],
+    tuple[Hypothesis, ...],
 ]
 
 
@@ -63,7 +81,9 @@ class ResearchCapability:
     applicable: Applicability
     evaluate_fn: Evaluation
     planner: Planner
+    observe_fn: Observe | None = None
     judge_fn: Judge | None = None
+    refine_fn: Refine | None = None
 
     def check_applicability(
         self,
@@ -95,6 +115,19 @@ class ResearchCapability:
             hypothesis,
         )
 
+    def observe(
+        self,
+        graph: SecurityGraph,
+        result: "ExecutionResult",
+    ) -> tuple["Observation", ...]:
+        if self.observe_fn is None:
+            return ()
+
+        return self.observe_fn(
+            graph,
+            result,
+        )
+
     def judge(
         self,
         graph: SecurityGraph,
@@ -109,6 +142,118 @@ class ResearchCapability:
             hypothesis,
             experiment,
         )
+
+    def refine(
+        self,
+        graph: SecurityGraph,
+        hypothesis: Hypothesis,
+        observations: tuple["Observation", ...],
+    ) -> tuple[Hypothesis, ...]:
+        if self.refine_fn is None:
+            return ()
+
+        return self.refine_fn(
+            graph,
+            hypothesis,
+            observations,
+        )
+
+
+def _observe_authorization(
+    graph: SecurityGraph,
+    result: ExecutionResult,
+) -> tuple[Observation, ...]:
+    """
+    Convert execution evidence into graph observations.
+
+    This preserves the existing authorization observation semantics,
+    including the special HTTP validation path, but makes the
+    capability the owner of post-execution interpretation.
+    """
+
+    observations: list[Observation] = []
+
+    experiment = graph.experiments.get(
+        result.experiment_id
+    )
+
+    for evidence in result.evidence:
+        if evidence.id not in graph.evidence:
+            graph.add_evidence(evidence)
+
+        observation = None
+
+        if (
+            experiment is not None
+            and experiment.kind == "authorization_http_check"
+            and experiment.request is not None
+            and experiment.request.expected_outcome is not None
+        ):
+            allowed = (
+                authorization_validation_decision_from_evidence(
+                    evidence
+                )
+            )
+
+            if allowed is None:
+                continue
+
+            request = experiment.request
+
+            if (
+                request.principal_id is None
+                or request.resource_id is None
+                or request.action is None
+            ):
+                continue
+
+            data = evidence.data
+
+            observation = AuthorizationObservation(
+                id=f"authobs:{evidence.id}",
+                principal_id=request.principal_id,
+                resource_id=request.resource_id,
+                action=request.action,
+                allowed=allowed,
+                status_code=data.get("status_code"),
+                endpoint_id=data.get("endpoint_id"),
+                evidence_ids=(evidence.id,),
+            )
+        else:
+            observation = authorization_observation_from_evidence(
+                evidence
+            )
+
+        if observation is None:
+            continue
+
+        if observation.id in graph.authorization_observations:
+            continue
+
+        graph.add_authorization_observation(
+            observation
+        )
+        observations.append(observation)
+
+    return tuple(observations)
+
+
+def _refine_authorization(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+    observations: tuple[Observation, ...],
+) -> tuple[Hypothesis, ...]:
+    """
+    Preserve the existing authorization refinement behavior behind
+    the capability boundary.
+
+    The legacy refiner is currently graph-global, so the capability
+    adapter deliberately passes the graph through unchanged.
+    """
+
+    return tuple(
+        refine_authorization_candidates(graph)
+    )
 
 
 def _judge_policy_validation(
@@ -473,6 +618,8 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         applicable=_authorization_candidate_applicable,
         evaluate_fn=_default_research_evaluation,
         planner=_plan_authorization_candidate,
+        observe_fn=_observe_authorization,
+        refine_fn=_refine_authorization,
     )
 )
 
@@ -484,6 +631,8 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         applicable=_differential_recheck_applicable,
         evaluate_fn=_default_research_evaluation,
         planner=_plan_authorization_recheck,
+        observe_fn=_observe_authorization,
+        refine_fn=_refine_authorization,
     )
 )
 
@@ -495,6 +644,8 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
         applicable=_policy_validation_applicable,
         evaluate_fn=_default_research_evaluation,
         planner=_plan_policy_validation,
+        observe_fn=_observe_authorization,
         judge_fn=_judge_policy_validation,
+        refine_fn=_refine_authorization,
     )
 )

@@ -1,4 +1,3 @@
-from ..capabilities import DEFAULT_RESEARCH_CAPABILITIES
 from ..graph import SecurityGraph
 from ..models import (
     ResearchCandidate,
@@ -17,6 +16,8 @@ def generate_research_candidates(
     The decision engine intentionally contains no knowledge of
     individual hypothesis kinds or concrete security tools.
     """
+
+    from ..capabilities import DEFAULT_RESEARCH_CAPABILITIES
 
     candidates: list[ResearchCandidate] = []
 

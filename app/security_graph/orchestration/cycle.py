@@ -2,7 +2,6 @@ from ..analysis import (
     apply_validation_judgment,
     choose_research_decision,
     materialize_confirmed_findings,
-    refine_authorization_candidates,
 )
 from ..capabilities import DEFAULT_RESEARCH_CAPABILITIES
 from ..execution import ExecutorRegistry
@@ -13,7 +12,6 @@ from ..models import (
     Hypothesis,
     InvestigationCycleResult,
 )
-from .observations import ingest_execution_observations
 
 
 def _execute_experiment(
@@ -95,10 +93,13 @@ def run_investigation_cycle(
             f"{research_decision.capability_id}"
         )
 
-    experiment = DEFAULT_RESEARCH_CAPABILITIES.plan(
+    capability = DEFAULT_RESEARCH_CAPABILITIES.get(
+        research_decision.capability_id
+    )
+
+    experiment = capability.plan(
         graph,
         hypothesis,
-        research_decision.capability_id,
     )
 
     if experiment is None:
@@ -123,7 +124,7 @@ def run_investigation_cycle(
         experiment,
     )
 
-    observations = ingest_execution_observations(
+    observations = capability.observe(
         graph,
         execution,
     )
@@ -149,7 +150,11 @@ def run_investigation_cycle(
 
     hypotheses_before = set(graph.hypotheses)
 
-    refine_authorization_candidates(graph)
+    refined_hypotheses = capability.refine(
+        graph,
+        hypothesis,
+        observations,
+    )
 
     new_hypothesis_ids = tuple(
         sorted(
