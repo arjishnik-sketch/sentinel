@@ -1,7 +1,6 @@
 from ..analysis import (
     apply_validation_judgment,
     choose_research_decision,
-    judge_authorization_validation,
     materialize_confirmed_findings,
     refine_authorization_candidates,
 )
@@ -14,12 +13,6 @@ from ..models import (
     Hypothesis,
     InvestigationCycleResult,
 )
-from ..planning import (
-    plan_authorization_candidate,
-    plan_authorization_recheck,
-    plan_authorization_policy_validation,
-)
-from ..policy import select_principal
 from .observations import ingest_execution_observations
 
 
@@ -140,14 +133,17 @@ def run_investigation_cycle(
         for observation in observations
     )
 
-    judgment = None
+    capability = DEFAULT_RESEARCH_CAPABILITIES.get(
+        research_decision.capability_id
+    )
 
-    if experiment.kind == "authorization_http_check":
-        judgment = judge_authorization_validation(
-            graph,
-            hypothesis=hypothesis,
-            experiment_id=experiment.id,
-        )
+    judgment = capability.judge(
+        graph,
+        hypothesis,
+        experiment,
+    )
+
+    if judgment is not None:
         graph.add_validation_judgment(judgment)
         apply_validation_judgment(graph, judgment)
 

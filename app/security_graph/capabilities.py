@@ -2,13 +2,19 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .graph import SecurityGraph
-from .models import Experiment, Hypothesis
+from .models import (
+    Experiment,
+    Hypothesis,
+    ResearchCandidate,
+    ValidationJudgment,
+)
 from .planning import (
     plan_authorization_candidate,
     plan_authorization_policy_validation,
     plan_authorization_recheck,
 )
 from .policy import select_principal
+from .validation_core import judge_authorization_validation
 
 
 Planner = Callable[
@@ -16,27 +22,231 @@ Planner = Callable[
     Experiment | None,
 ]
 
+Applicability = Callable[
+    [SecurityGraph, Hypothesis],
+    tuple[bool, tuple[str, ...]],
+]
+
+
+Judge = Callable[
+    [SecurityGraph, Hypothesis, Experiment],
+    ValidationJudgment | None,
+]
+
 
 @dataclass(frozen=True)
 class ResearchCapability:
     """
-    A capability Sentinel can deliberately invoke.
+    A self-describing research capability.
 
-    The decision layer selects a capability by ID.
-    The capability owns the concrete planning and executor contract.
+    The decision engine knows only that capabilities can answer:
+
+        "Can I perform this action for this hypothesis?"
+
+    The capability itself owns:
+      - applicability
+      - rationale
+      - planning
+      - executor binding
     """
 
     id: str
     action: str
     executor_kind: str
+    applicable: Applicability
     planner: Planner
+    judge_fn: Judge | None = None
+
+    def check_applicability(
+        self,
+        graph: SecurityGraph,
+        hypothesis: Hypothesis,
+    ) -> tuple[bool, tuple[str, ...]]:
+        return self.applicable(
+            graph,
+            hypothesis,
+        )
 
     def plan(
         self,
         graph: SecurityGraph,
         hypothesis: Hypothesis,
     ) -> Experiment | None:
-        return self.planner(graph, hypothesis)
+        return self.planner(
+            graph,
+            hypothesis,
+        )
+
+    def judge(
+        self,
+        graph: SecurityGraph,
+        hypothesis: Hypothesis,
+        experiment: Experiment,
+    ) -> ValidationJudgment | None:
+        if self.judge_fn is None:
+            return None
+
+        return self.judge_fn(
+            graph,
+            hypothesis,
+            experiment,
+        )
+
+
+def _judge_policy_validation(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+    experiment: Experiment,
+) -> ValidationJudgment:
+    return judge_authorization_validation(
+        graph,
+        hypothesis=hypothesis,
+        experiment_id=experiment.id,
+    )
+
+
+# ============================================================
+# Authorization capability applicability
+# ============================================================
+
+
+def _policy_validation_applicable(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> tuple[bool, tuple[str, ...]]:
+    if hypothesis.kind != "authorization_policy_violation":
+        return (
+            False,
+            (
+                "hypothesis is not an authorization "
+                "policy-violation hypothesis",
+            ),
+        )
+
+    if hypothesis.status != "OPEN":
+        return (
+            False,
+            ("hypothesis is not open",),
+        )
+
+    if not hypothesis.evidence_ids:
+        return (
+            False,
+            ("hypothesis has no originating evidence",),
+        )
+
+    return (
+        True,
+        (
+            "hypothesis represents an explicit authorization "
+            "policy contradiction",
+            "fresh validation can test whether the contradiction "
+            "reproduces",
+        ),
+    )
+
+
+def _authorization_candidate_applicable(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> tuple[bool, tuple[str, ...]]:
+    if hypothesis.kind != "authorization_candidate":
+        return (
+            False,
+            (
+                "hypothesis is not an authorization candidate",
+            ),
+        )
+
+    if hypothesis.status != "OPEN":
+        return (
+            False,
+            ("hypothesis is not open",),
+        )
+
+    principal = select_principal(graph)
+
+    if principal is None:
+        return (
+            False,
+            ("no selectable principal is available",),
+        )
+
+    return (
+        True,
+        (
+            "hypothesis represents an authorization candidate",
+            f"principal {principal.id} is available for testing",
+        ),
+    )
+
+
+def _differential_recheck_applicable(
+    graph: SecurityGraph,
+    hypothesis: Hypothesis,
+) -> tuple[bool, tuple[str, ...]]:
+    if hypothesis.kind != "authorization_differential":
+        return (
+            False,
+            (
+                "hypothesis is not an authorization differential",
+            ),
+        )
+
+    if hypothesis.status != "OPEN":
+        return (
+            False,
+            ("hypothesis is not open",),
+        )
+
+    prefix = "hyp:diff:"
+
+    if not hypothesis.id.startswith(prefix):
+        return (
+            False,
+            ("differential hypothesis ID lacks canonical "
+             "resource/action encoding",),
+        )
+
+    remainder = hypothesis.id[len(prefix):]
+
+    if ":" not in remainder:
+        return (
+            False,
+            ("differential hypothesis lacks an action component",),
+        )
+
+    resource_id, action = remainder.rsplit(":", 1)
+
+    if not resource_id or not action:
+        return (
+            False,
+            ("differential hypothesis contains an empty "
+             "resource or action",),
+        )
+
+    principal = select_principal(graph)
+
+    if principal is None:
+        return (
+            False,
+            ("no selectable principal is available",),
+        )
+
+    return (
+        True,
+        (
+            "hypothesis represents an authorization differential",
+            f"resource {resource_id} and action {action} "
+            "are recoverable from canonical hypothesis identity",
+            f"principal {principal.id} is available for recheck",
+        ),
+    )
+
+
+# ============================================================
+# Authorization capability planners
+# ============================================================
 
 
 def _plan_policy_validation(
@@ -96,42 +306,21 @@ def _plan_authorization_recheck(
     )
 
 
+# ============================================================
+# Registry
+# ============================================================
+
+
 class ResearchCapabilityRegistry:
     """
     Registry of concrete research capabilities.
 
-    The controller does not need to know how a capability is planned.
+    The decision engine can enumerate this registry without knowing
+    anything about individual hypothesis kinds.
     """
 
     def __init__(self):
         self._capabilities: dict[str, ResearchCapability] = {}
-
-        self.register(
-            ResearchCapability(
-                id="authorization.policy_validation",
-                action="validate_hypothesis",
-                executor_kind="authorization_http_check",
-                planner=_plan_policy_validation,
-            )
-        )
-
-        self.register(
-            ResearchCapability(
-                id="authorization.candidate_check",
-                action="test_authorization_candidate",
-                executor_kind="authorization_candidate_check",
-                planner=_plan_authorization_candidate,
-            )
-        )
-
-        self.register(
-            ResearchCapability(
-                id="authorization.differential_recheck",
-                action="recheck_authorization",
-                executor_kind="authorization_recheck",
-                planner=_plan_authorization_recheck,
-            )
-        )
 
     def register(
         self,
@@ -140,6 +329,16 @@ class ResearchCapabilityRegistry:
         if not capability.id.strip():
             raise ValueError(
                 "Capability ID cannot be empty."
+            )
+
+        if not capability.action.strip():
+            raise ValueError(
+                "Capability action cannot be empty."
+            )
+
+        if not capability.executor_kind.strip():
+            raise ValueError(
+                "Capability executor kind cannot be empty."
             )
 
         if capability.id in self._capabilities:
@@ -167,8 +366,17 @@ class ResearchCapabilityRegistry:
     ) -> bool:
         return capability_id in self._capabilities
 
+    def all(self) -> tuple[ResearchCapability, ...]:
+        return tuple(
+            self._capabilities[key]
+            for key in sorted(self._capabilities)
+        )
+
     def ids(self) -> tuple[str, ...]:
-        return tuple(sorted(self._capabilities))
+        return tuple(
+            capability.id
+            for capability in self.all()
+        )
 
     def plan(
         self,
@@ -178,15 +386,43 @@ class ResearchCapabilityRegistry:
     ) -> Experiment | None:
         capability = self.get(capability_id)
 
-        if capability.action == "":
-            raise ValueError(
-                f"Capability has no action: {capability.id}"
-            )
-
         return capability.plan(
             graph,
             hypothesis,
         )
 
 
-DEFAULT_RESEARCH_CAPABILITIES = ResearchCapabilityRegistry()
+DEFAULT_RESEARCH_CAPABILITIES = (
+    ResearchCapabilityRegistry()
+)
+
+DEFAULT_RESEARCH_CAPABILITIES.register(
+    ResearchCapability(
+        id="authorization.candidate_check",
+        action="test_authorization_candidate",
+        executor_kind="authorization_candidate_check",
+        applicable=_authorization_candidate_applicable,
+        planner=_plan_authorization_candidate,
+    )
+)
+
+DEFAULT_RESEARCH_CAPABILITIES.register(
+    ResearchCapability(
+        id="authorization.differential_recheck",
+        action="recheck_authorization",
+        executor_kind="authorization_recheck",
+        applicable=_differential_recheck_applicable,
+        planner=_plan_authorization_recheck,
+    )
+)
+
+DEFAULT_RESEARCH_CAPABILITIES.register(
+    ResearchCapability(
+        id="authorization.policy_validation",
+        action="validate_hypothesis",
+        executor_kind="authorization_http_check",
+        applicable=_policy_validation_applicable,
+        planner=_plan_policy_validation,
+        judge_fn=_judge_policy_validation,
+    )
+)

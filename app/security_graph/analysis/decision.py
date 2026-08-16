@@ -1,6 +1,6 @@
+from ..capabilities import DEFAULT_RESEARCH_CAPABILITIES
 from ..graph import SecurityGraph
 from ..models import (
-    Hypothesis,
     ResearchCandidate,
     ResearchDecision,
 )
@@ -11,13 +11,11 @@ def generate_research_candidates(
     graph: SecurityGraph,
 ) -> list[ResearchCandidate]:
     """
-    Generate bounded research candidates from unresolved hypotheses.
+    Generate candidates by asking every registered capability
+    whether it is applicable.
 
-    This first implementation intentionally maps only capabilities that
-    the current security-graph planning layer can execute safely.
-
-    Candidate generation does not execute anything and does not invent
-    request details.
+    The decision engine intentionally contains no knowledge of
+    individual hypothesis kinds or concrete security tools.
     """
 
     candidates: list[ResearchCandidate] = []
@@ -26,68 +24,38 @@ def generate_research_candidates(
         if hypothesis.status != "OPEN":
             continue
 
-        score = score_hypothesis(
+        hypothesis_score = score_hypothesis(
             graph,
             hypothesis,
         )
 
-        if score.score <= 0:
+        if hypothesis_score.score <= 0:
             continue
 
-        rationale = list(score.reasons)
-
-        if hypothesis.kind == "authorization_policy_violation":
-            candidates.append(
-                ResearchCandidate(
-                    id=f"candidate:validate:{hypothesis.id}",
-                    hypothesis_id=hypothesis.id,
-                    action="validate_hypothesis",
-                    capability_id="authorization.policy_validation",
-                    score=min(score.score + 0.05, 1.0),
-                    rationale=tuple(
-                        rationale
-                        + [
-                            "explicit policy contradiction can be "
-                            "validated with a fresh authorization check"
-                        ]
-                    ),
+        for capability in DEFAULT_RESEARCH_CAPABILITIES.all():
+            applicable, reasons = (
+                capability.check_applicability(
+                    graph,
+                    hypothesis,
                 )
             )
-            continue
 
-        if hypothesis.kind == "authorization_differential":
+            if not applicable:
+                continue
+
             candidates.append(
                 ResearchCandidate(
-                    id=f"candidate:recheck:{hypothesis.id}",
-                    hypothesis_id=hypothesis.id,
-                    action="recheck_authorization",
-                    capability_id="authorization.policy_validation",
-                    score=score.score,
-                    rationale=tuple(
-                        rationale
-                        + [
-                            "authorization differential has a "
-                            "dedicated recheck capability"
-                        ]
+                    id=(
+                        f"candidate:{capability.id}:"
+                        f"{hypothesis.id}"
                     ),
-                )
-            )
-            continue
-
-        if hypothesis.kind == "authorization_candidate":
-            candidates.append(
-                ResearchCandidate(
-                    id=f"candidate:check:{hypothesis.id}",
                     hypothesis_id=hypothesis.id,
-                    action="test_authorization_candidate",
-                    capability_id="authorization.policy_validation",
-                    score=score.score,
+                    action=capability.action,
+                    capability_id=capability.id,
+                    score=hypothesis_score.score,
                     rationale=tuple(
-                        rationale
-                        + [
-                            "authorization candidate has an "
-                            "HTTP validation capability"
-                        ]
+                        hypothesis_score.reasons
+                        + reasons
                     ),
                 )
             )
@@ -105,9 +73,9 @@ def choose_research_decision(
     graph: SecurityGraph,
 ) -> ResearchDecision | None:
     """
-    Choose the highest-value currently executable research candidate.
+    Choose the highest-value currently applicable capability.
 
-    Selection is deterministic. No execution occurs here.
+    Selection is deterministic and records rejected alternatives.
     """
 
     candidates = generate_research_candidates(graph)
