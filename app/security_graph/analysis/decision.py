@@ -4,6 +4,43 @@ from ..models import (
     ResearchDecision,
 )
 from .ranking import score_hypothesis
+from .refinement_pressure import (
+    evaluate_refinement_pressure,
+)
+
+
+def score_research_frontier(
+    base_value: float,
+    refinement_level: str,
+) -> float:
+    """
+    Combine capability value with domain-independent refinement
+    urgency.
+
+    Capability evaluation remains the source of research value.
+    Refinement pressure contributes bounded urgency only.
+
+    The decision engine does not interpret hypothesis kinds,
+    evidence semantics, or security-domain concepts.
+    """
+
+    pressure_bonus = {
+        "NO_PRESSURE": 0.00,
+        "LOW": 0.00,
+        "MEDIUM": 0.10,
+        "HIGH": 0.20,
+    }.get(
+        refinement_level,
+        0.00,
+    )
+
+    return min(
+        1.0,
+        max(
+            0.0,
+            base_value + pressure_bonus,
+        ),
+    )
 
 
 def generate_research_candidates(
@@ -49,6 +86,18 @@ def generate_research_candidates(
                 hypothesis,
             )
 
+            refinement_pressure = (
+                evaluate_refinement_pressure(
+                    graph,
+                    hypothesis,
+                )
+            )
+
+            frontier_score = score_research_frontier(
+                evaluation.value,
+                refinement_pressure.level,
+            )
+
             candidates.append(
                 ResearchCandidate(
                     id=(
@@ -58,13 +107,23 @@ def generate_research_candidates(
                     hypothesis_id=hypothesis.id,
                     action=capability.action,
                     capability_id=capability.id,
-                    score=evaluation.value,
+                    score=frontier_score,
                     rationale=tuple(
                         hypothesis_score.reasons
                         + reasons
                         + evaluation.reasons
+                        + refinement_pressure.reasons
                     ),
                     evaluation=evaluation,
+                    refinement_level=(
+                        refinement_pressure.level
+                    ),
+                    refinement_required=(
+                        refinement_pressure.required
+                    ),
+                    refinement_uncertainty=(
+                        refinement_pressure.uncertainty
+                    ),
                 )
             )
 

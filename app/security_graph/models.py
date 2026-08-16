@@ -224,6 +224,9 @@ class ResearchCandidate:
     score: float = 0.0
     rationale: tuple[str, ...] = ()
     evaluation: ResearchEvaluation | None = None
+    refinement_level: str = "NO_PRESSURE"
+    refinement_required: bool = False
+    refinement_uncertainty: float = 0.0
 
 
 @dataclass(frozen=True)
