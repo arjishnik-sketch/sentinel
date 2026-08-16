@@ -17,6 +17,7 @@ from .models import (
     Relationship,
     Resource,
     Session,
+    SecurityFinding,
     ValidationJudgment,
 )
 
@@ -115,6 +116,19 @@ class GraphStore:
                 status TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS findings (
+                id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                claim TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                identity TEXT,
+                evidence_ids TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS experiments (
                 id TEXT PRIMARY KEY,
                 hypothesis_id TEXT NOT NULL,
@@ -142,6 +156,7 @@ class GraphStore:
                 "DELETE FROM authorization_observations"
             )
             self.conn.execute("DELETE FROM hypotheses")
+            self.conn.execute("DELETE FROM findings")
             self.conn.execute("DELETE FROM experiments")
             self.conn.execute("DELETE FROM validation_judgments")
 
@@ -309,6 +324,49 @@ class GraphStore:
                     ),
                 )
 
+            for item in graph.findings.values():
+                identity = (
+                    {
+                        "kind": item.identity.kind,
+                        "principal_id": item.identity.principal_id,
+                        "resource_id": item.identity.resource_id,
+                        "action": item.identity.action,
+                    }
+                    if item.identity is not None
+                    else None
+                )
+
+                self.conn.execute(
+                    """
+                    INSERT INTO findings
+                    (
+                        id,
+                        hypothesis_id,
+                        kind,
+                        title,
+                        claim,
+                        severity,
+                        confidence,
+                        identity,
+                        evidence_ids,
+                        status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        item.hypothesis_id,
+                        item.kind,
+                        item.title,
+                        item.claim,
+                        item.severity,
+                        item.confidence,
+                        json.dumps(identity),
+                        json.dumps(item.evidence_ids),
+                        item.status,
+                    ),
+                )
+
             for item in graph.experiments.values():
                 self.conn.execute(
                     """
@@ -469,6 +527,56 @@ class GraphStore:
                     evidence_ids=tuple(
                         json.loads(row["evidence_ids"])
                     ),
+                )
+            )
+
+        for row in self.conn.execute(
+            """
+            SELECT
+                id,
+                hypothesis_id,
+                kind,
+                title,
+                claim,
+                severity,
+                confidence,
+                identity,
+                evidence_ids,
+                status
+            FROM findings
+            """
+        ):
+            identity_data = (
+                json.loads(row["identity"])
+                if row["identity"]
+                else None
+            )
+
+            identity = (
+                HypothesisIdentity(
+                    kind=identity_data["kind"],
+                    principal_id=identity_data.get("principal_id"),
+                    resource_id=identity_data.get("resource_id"),
+                    action=identity_data.get("action"),
+                )
+                if identity_data is not None
+                else None
+            )
+
+            graph.add_finding(
+                SecurityFinding(
+                    id=row["id"],
+                    hypothesis_id=row["hypothesis_id"],
+                    kind=row["kind"],
+                    title=row["title"],
+                    claim=row["claim"],
+                    severity=row["severity"],
+                    confidence=row["confidence"],
+                    identity=identity,
+                    evidence_ids=tuple(
+                        json.loads(row["evidence_ids"])
+                    ),
+                    status=row["status"],
                 )
             )
 

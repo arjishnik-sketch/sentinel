@@ -88,6 +88,41 @@ class HypothesisIdentity:
 
 
 @dataclass(frozen=True)
+class SecurityFinding:
+    """
+    Durable security finding derived from a validated hypothesis.
+
+    A finding is a reporting-level security claim, not a raw
+    observation. It must retain the hypothesis and evidence
+    provenance that justify the claim.
+    """
+    id: str
+    hypothesis_id: str
+    kind: str
+    title: str
+    claim: str
+    severity: str
+    confidence: float
+    identity: HypothesisIdentity | None = None
+    evidence_ids: tuple[str, ...] = ()
+    status: str = "OPEN"
+
+
+@dataclass(frozen=True)
+class FindingMaterialization:
+    """
+    Result of materializing confirmed hypotheses into findings.
+
+    Created findings are new security claims.
+    Updated findings gained new or stronger evidence/state.
+    Unchanged findings were already fully represented.
+    """
+    created: tuple[SecurityFinding, ...] = ()
+    updated: tuple[SecurityFinding, ...] = ()
+    unchanged: tuple[SecurityFinding, ...] = ()
+
+
+@dataclass(frozen=True)
 class Hypothesis:
     id: str
     kind: str

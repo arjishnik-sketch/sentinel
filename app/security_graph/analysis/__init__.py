@@ -11,6 +11,10 @@ from .hypothesis import (
     hypothesis_from_policy_contradiction,
 )
 from .attack_surface import generate_parameter_hypotheses
+from .findings import (
+    finding_from_hypothesis,
+    materialize_confirmed_findings,
+)
 from .ranking import rank_hypotheses, score_hypothesis
 from .selection import select_next_hypothesis
 from .refinement import refine_authorization_candidates
@@ -31,6 +35,8 @@ __all__ = [
     "hypothesis_from_differential",
     "hypothesis_from_policy_contradiction",
     "generate_parameter_hypotheses",
+    "finding_from_hypothesis",
+    "materialize_confirmed_findings",
     "rank_hypotheses",
     "score_hypothesis",
     "select_next_hypothesis",

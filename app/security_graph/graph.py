@@ -8,6 +8,7 @@ from .models import (
     Evidence,
     Hypothesis,
     HypothesisIdentity,
+    SecurityFinding,
     Observation,
     Principal,
     Relationship,
@@ -30,6 +31,7 @@ class SecurityGraph:
     observations: dict[str, Observation] = field(default_factory=dict)
     authorization_observations: dict[str, AuthorizationObservation] = field(default_factory=dict)
     hypotheses: dict[str, Hypothesis] = field(default_factory=dict)
+    findings: dict[str, SecurityFinding] = field(default_factory=dict)
     experiments: dict[str, Experiment] = field(default_factory=dict)
     validation_judgments: dict[str, ValidationJudgment] = field(default_factory=dict)
     workflow_plans: dict[str, WorkflowPlan] = field(default_factory=dict)
@@ -182,6 +184,56 @@ class SecurityGraph:
                 return hypothesis
 
         return None
+
+
+    def add_finding(
+        self,
+        finding: SecurityFinding,
+    ) -> None:
+        self.findings[finding.id] = finding
+
+    def find_equivalent_finding(
+        self,
+        finding: SecurityFinding,
+    ) -> SecurityFinding | None:
+        """
+        Find an existing finding representing the same semantic
+        security claim.
+
+        Finding IDs are intentionally ignored.
+        """
+
+        for existing in self.findings.values():
+            if (
+                existing.kind == finding.kind
+                and existing.identity == finding.identity
+            ):
+                return existing
+
+        return None
+
+    def findings_for(
+        self,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> list[SecurityFinding]:
+        results = self.findings.values()
+
+        if kind is not None:
+            results = [
+                item
+                for item in results
+                if item.kind == kind
+            ]
+
+        if status is not None:
+            results = [
+                item
+                for item in results
+                if item.status == status
+            ]
+
+        return list(results)
 
 
     def hypotheses_for(
