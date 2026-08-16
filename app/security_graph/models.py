@@ -203,3 +203,4 @@ class InvestigationCycleResult:
     judgment: ValidationJudgment | None = None
     observation_ids: tuple[str, ...] = ()
     new_hypothesis_ids: tuple[str, ...] = ()
+    finding_materialization: FindingMaterialization | None = None

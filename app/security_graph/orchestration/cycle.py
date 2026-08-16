@@ -1,6 +1,7 @@
 from ..analysis import (
     apply_validation_judgment,
     judge_authorization_validation,
+    materialize_confirmed_findings,
     refine_authorization_candidates,
     select_next_hypothesis,
 )
@@ -188,6 +189,10 @@ def run_investigation_cycle(
         )
     )
 
+    finding_materialization = (
+        materialize_confirmed_findings(graph)
+    )
+
     return InvestigationCycleResult(
         hypothesis_id=hypothesis.id,
         experiment_id=experiment.id,
@@ -195,4 +200,5 @@ def run_investigation_cycle(
         judgment=judgment,
         observation_ids=observation_ids,
         new_hypothesis_ids=new_hypothesis_ids,
+        finding_materialization=finding_materialization,
     )
