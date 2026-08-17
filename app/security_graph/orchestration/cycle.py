@@ -12,6 +12,9 @@ from ..models import (
     Hypothesis,
     InvestigationCycleResult,
 )
+from ..analysis.refinement_pressure import (
+    evaluate_refinement_pressure,
+)
 
 
 def _execute_experiment(
@@ -150,11 +153,19 @@ def run_investigation_cycle(
 
     hypotheses_before = set(graph.hypotheses)
 
-    refined_hypotheses = capability.refine(
+    refinement_pressure = evaluate_refinement_pressure(
         graph,
         hypothesis,
-        observations,
     )
+
+    if refinement_pressure.required:
+        refined_hypotheses = capability.refine(
+            graph,
+            hypothesis,
+            observations,
+        )
+    else:
+        refined_hypotheses = ()
 
     new_hypothesis_ids = tuple(
         sorted(

@@ -245,12 +245,19 @@ def _refine_authorization(
     observations: tuple[Observation, ...],
 ) -> tuple[Hypothesis, ...]:
     """
-    Preserve the existing authorization refinement behavior behind
-    the capability boundary.
+    Refine an authorization hypothesis using newly observed
+    authorization behavior.
 
-    The legacy refiner is currently graph-global, so the capability
-    adapter deliberately passes the graph through unchanged.
+    Refinement is capability-owned, but the existing authorization
+    hypothesis generators remain the source of domain-specific
+    refinement semantics.
+
+    No observation means there is no new authorization fact from
+    which a refined hypothesis can be derived.
     """
+
+    if not observations:
+        return ()
 
     return tuple(
         refine_authorization_candidates(graph)
