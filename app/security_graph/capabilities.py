@@ -245,18 +245,38 @@ def _refine_authorization(
     observations: tuple[Observation, ...],
 ) -> tuple[Hypothesis, ...]:
     """
-    Refine an authorization hypothesis using newly observed
-    authorization behavior.
+    Refine an authorization hypothesis from fresh observations.
 
-    Refinement is capability-owned, but the existing authorization
-    hypothesis generators remain the source of domain-specific
-    refinement semantics.
+    The capability owns the refinement boundary. Only observations
+    produced by the current research cycle are eligible to trigger
+    refinement.
 
-    No observation means there is no new authorization fact from
-    which a refined hypothesis can be derived.
+    Existing authorization hypothesis-generation semantics remain
+    authoritative; this adapter prevents stale graph state from
+    masquerading as newly discovered refinement evidence.
     """
 
     if not observations:
+        return ()
+
+    fresh_ids = {
+        observation.id
+        for observation in observations
+    }
+
+    if not fresh_ids:
+        return ()
+
+    authorization_observations = tuple(
+        observation
+        for observation in observations
+        if (
+            observation.id in graph.authorization_observations
+            or observation.kind == "authorization"
+        )
+    )
+
+    if not authorization_observations:
         return ()
 
     return tuple(
