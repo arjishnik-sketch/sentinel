@@ -10,7 +10,7 @@ from .hypothesis import (
     hypothesis_from_differential,
     hypothesis_from_policy_contradiction,
 )
-from .attack_surface import generate_parameter_hypotheses
+from .attack_surface import generate_parameter_hypotheses, generate_api_hypotheses
 from .findings import (
     finding_from_hypothesis,
     materialize_confirmed_findings,
@@ -46,6 +46,7 @@ __all__ = [
     "generate_research_candidates",
     "choose_research_decision",
     "select_next_hypothesis",
+    "generate_api_hypotheses",
     "refine_authorization_candidates",
     "authorization_observation_from_evidence",
     "authorization_validation_decision_from_evidence",

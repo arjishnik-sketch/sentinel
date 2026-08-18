@@ -63,6 +63,69 @@ def generate_parameter_hypotheses(
             claim=claim,
             confidence=0.45,
             evidence_ids=(observation.id,),
+            source_ids=(endpoint_id,),
+        )
+
+        graph.add_hypothesis(hypothesis)
+        hypotheses.append(hypothesis)
+
+    return hypotheses
+
+def generate_api_hypotheses(
+    graph: SecurityGraph,
+) -> list[Hypothesis]:
+    """
+    Generate conservative authorization hypotheses from
+    explicitly discovered API endpoints.
+
+    Discovery of an API endpoint is not evidence of a
+    vulnerability. It is only a justified reason to investigate
+    authorization behavior.
+
+    The originating recon observation is retained as evidence.
+    """
+
+    hypotheses: list[Hypothesis] = []
+
+    for observation in graph.observations.values():
+        if observation.kind != "recon_api":
+            continue
+
+        url = None
+
+        if isinstance(observation.data, dict):
+            candidate = observation.data.get("url")
+
+            if isinstance(candidate, str):
+                url = candidate.strip()
+
+        if not url:
+            continue
+
+        endpoint_id = observation.subject
+
+        hypothesis_id = (
+            f"hyp:api-auth:"
+            f"{endpoint_id}"
+        )
+
+        if hypothesis_id in graph.hypotheses:
+            continue
+
+        claim = (
+            f"API endpoint {endpoint_id} is reachable and "
+            "may expose security-sensitive operations. "
+            "Authorization behavior should be investigated "
+            "before treating the endpoint as a vulnerability."
+        )
+
+        hypothesis = Hypothesis(
+            id=hypothesis_id,
+            kind="authorization_candidate",
+            claim=claim,
+            confidence=0.45,
+            evidence_ids=(observation.id,),
+            source_ids=(endpoint_id,),
         )
 
         graph.add_hypothesis(hypothesis)

@@ -162,82 +162,81 @@ class ResearchCapability:
 
 def _observe_authorization(
     graph: SecurityGraph,
-    result: ExecutionResult,
+    execution: ExecutionResult,
 ) -> tuple[Observation, ...]:
     """
-    Convert execution evidence into graph observations.
+    Convert fresh HTTP execution evidence into structured
+    observations without inventing authorization semantics.
 
-    This preserves the existing authorization observation semantics,
-    including the special HTTP validation path, but makes the
-    capability the owner of post-execution interpretation.
+    The observation records only facts directly present in the
+    execution evidence.
+
+    It does not infer:
+      - authorization success
+      - authorization failure
+      - vulnerability
+      - policy violation
     """
 
     observations: list[Observation] = []
 
-    experiment = graph.experiments.get(
-        result.experiment_id
-    )
+    for evidence in execution.evidence:
+        if evidence.source != "http_response":
+            continue
 
-    for evidence in result.evidence:
-        if evidence.id not in graph.evidence:
-            graph.add_evidence(evidence)
+        data = evidence.data
 
-        observation = None
+        if not isinstance(data, dict):
+            continue
 
-        if (
-            experiment is not None
-            and experiment.kind == "authorization_http_check"
-            and experiment.request is not None
-            and experiment.request.expected_outcome is not None
+        status_code = data.get("status_code")
+
+        method = data.get("method")
+        url = data.get("url")
+
+        if not isinstance(status_code, int):
+            continue
+
+        if not isinstance(method, str):
+            continue
+
+        if not isinstance(url, str):
+            continue
+
+        observation_data = {
+            "evidence_id": evidence.id,
+            "experiment_id": execution.experiment_id,
+            "method": method,
+            "url": url,
+            "status_code": status_code,
+            "response_body_length": data.get(
+                "response_body_length"
+            ),
+        }
+
+        for key in (
+            "principal_id",
+            "resource_id",
+            "action",
+            "expected_statuses",
+            "expected_outcome",
         ):
-            allowed = (
-                authorization_validation_decision_from_evidence(
-                    evidence
-                )
-            )
+            if key in data:
+                observation_data[key] = data[key]
 
-            if allowed is None:
-                continue
-
-            request = experiment.request
-
-            if (
-                request.principal_id is None
-                or request.resource_id is None
-                or request.action is None
-            ):
-                continue
-
-            data = evidence.data
-
-            observation = AuthorizationObservation(
-                id=f"authobs:{evidence.id}",
-                principal_id=request.principal_id,
-                resource_id=request.resource_id,
-                action=request.action,
-                allowed=allowed,
-                status_code=data.get("status_code"),
-                endpoint_id=data.get("endpoint_id"),
-                evidence_ids=(evidence.id,),
-            )
-        else:
-            observation = authorization_observation_from_evidence(
-                evidence
-            )
-
-        if observation is None:
-            continue
-
-        if observation.id in graph.authorization_observations:
-            continue
-
-        graph.add_authorization_observation(
-            observation
+        observation = Observation(
+            id=f"httpobs:{evidence.id}",
+            kind="http_execution",
+            subject=url,
+            data=observation_data,
         )
+
+        if observation.id not in graph.observations:
+            graph.add_observation(observation)
+
         observations.append(observation)
 
     return tuple(observations)
-
 
 def _refine_authorization(
     graph: SecurityGraph,
@@ -481,36 +480,67 @@ def _authorization_candidate_applicable(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> tuple[bool, tuple[str, ...]]:
+    """
+    An authorization candidate is selectable when its hypothesis
+    retains exactly one canonical endpoint as durable provenance.
+
+    Endpoint investigation does not require a principal. No
+    credentials, identity, or authorization expectation is inferred.
+    """
+
     if hypothesis.kind != "authorization_candidate":
         return (
             False,
-            (
-                "hypothesis is not an authorization candidate",
-            ),
+            ("hypothesis is not an authorization candidate",),
         )
 
     if hypothesis.status != "OPEN":
         return (
             False,
-            ("hypothesis is not open",),
+            ("hypothesis is not OPEN",),
         )
 
-    principal = select_principal(graph)
-
-    if principal is None:
+    if not hypothesis.source_ids:
         return (
             False,
-            ("no selectable principal is available",),
+            ("hypothesis has no endpoint provenance",),
+        )
+
+    endpoints = [
+        graph.endpoints.get(source_id)
+        for source_id in hypothesis.source_ids
+    ]
+
+    endpoints = [
+        endpoint
+        for endpoint in endpoints
+        if endpoint is not None
+    ]
+
+    if len(endpoints) != 1:
+        return (
+            False,
+            ("hypothesis does not resolve to exactly one endpoint",),
+        )
+
+    endpoint = endpoints[0]
+
+    if not endpoint.method.strip():
+        return (
+            False,
+            ("canonical endpoint has no HTTP method",),
+        )
+
+    if not endpoint.url.strip():
+        return (
+            False,
+            ("canonical endpoint has no URL",),
         )
 
     return (
         True,
-        (
-            "hypothesis represents an authorization candidate",
-            f"principal {principal.id} is available for testing",
-        ),
+        ("canonical endpoint provenance is available",),
     )
-
 
 def _differential_recheck_applicable(
     graph: SecurityGraph,
@@ -594,14 +624,9 @@ def _plan_authorization_candidate(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> Experiment | None:
-    principal = select_principal(graph)
-
-    if principal is None:
-        return None
-
     return plan_authorization_candidate(
+        graph,
         hypothesis,
-        principal_id=principal.id,
     )
 
 
