@@ -136,6 +136,95 @@ def generate_research_candidates(
     )
 
 
+
+from dataclasses import dataclass
+
+from .hypothesis_evolution import (
+    evaluate_hypothesis_evolution,
+)
+from .hypothesis_state import (
+    build_hypothesis_state,
+)
+
+
+@dataclass(frozen=True)
+class ResearchOutcome:
+    """
+    Read-only projection of the current research state.
+
+    This does not mutate hypothesis lifecycle state and does not
+    interpret frontier exhaustion as vulnerability absence.
+    """
+
+    hypothesis_id: str
+    phase: str
+    frontier_status: str
+    resolved: bool
+    productive_actions_remaining: bool
+    residual_uncertainty: float
+    reasons: tuple[str, ...] = ()
+
+
+def evaluate_research_outcome(
+    graph: SecurityGraph,
+    hypothesis,
+) -> ResearchOutcome:
+    """
+    Project the current research outcome from existing graph state.
+
+    Frontier exhaustion means that no currently applicable
+    research action has positive decision value. It does not
+    prove or disprove the hypothesis.
+    """
+
+    state = build_hypothesis_state(
+        graph,
+        hypothesis,
+    )
+
+    evolution = evaluate_hypothesis_evolution(
+        graph,
+        hypothesis,
+    )
+
+    candidates = generate_research_candidates(
+        graph,
+    )
+
+    productive = any(
+        candidate.hypothesis_id == hypothesis.id
+        and candidate.score > 0.0
+        for candidate in candidates
+    )
+
+    if evolution.resolved:
+        frontier_status = "RESOLVED"
+    elif productive:
+        frontier_status = "ACTIVE"
+    else:
+        frontier_status = "EXHAUSTED"
+
+    return ResearchOutcome(
+        hypothesis_id=hypothesis.id,
+        phase=evolution.phase,
+        frontier_status=frontier_status,
+        resolved=evolution.resolved,
+        productive_actions_remaining=productive,
+        residual_uncertainty=state.residual_uncertainty,
+        reasons=tuple(
+            evolution.reasons
+            + (
+                (
+                    "productive research actions remain"
+                    if productive
+                    else
+                    "no currently productive research actions remain"
+                ),
+            )
+        ),
+    )
+
+
 def choose_research_decision(
     graph: SecurityGraph,
 ) -> ResearchDecision | None:
