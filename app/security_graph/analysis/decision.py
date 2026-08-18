@@ -152,6 +152,13 @@ def choose_research_decision(
 
     selected = candidates[0]
 
+    # A technically applicable action may still have no
+    # remaining research value. Keep zero-value candidates
+    # visible in the frontier, but never turn them into
+    # executable research decisions.
+    if selected.score <= 0.0:
+        return None
+
     return ResearchDecision(
         candidate_id=selected.id,
         hypothesis_id=selected.hypothesis_id,
