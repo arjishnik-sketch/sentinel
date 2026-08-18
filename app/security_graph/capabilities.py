@@ -353,6 +353,21 @@ def _evaluate_candidate_check(
             "low baseline operational risk",
         )
 
+    elif research_state.completed_attempts >= 2:
+        information_gain = 0.03
+
+        reasons = (
+            "repeated candidate research has produced "
+            "diminishing returns",
+            "candidate-check path has reached a low marginal "
+            "information-gain floor",
+            "hypothesis remains unresolved",
+            "additional candidate checking is not yet "
+            "epistemically prohibited",
+            "bounded HTTP validation cost",
+            "low baseline operational risk",
+        )
+
     elif research_state.residual_uncertainty >= 0.75:
         information_gain = 0.20
 
