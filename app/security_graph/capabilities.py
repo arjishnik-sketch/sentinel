@@ -337,16 +337,65 @@ def _evaluate_candidate_check(
     graph: SecurityGraph,
     hypothesis: Hypothesis,
 ) -> ResearchEvaluation:
-    return _research_evaluation(
-        information_gain=0.60,
-        cost=0.20,
-        risk=0.05,
-        reasons=(
+    research_state = build_research_state(
+        graph,
+        hypothesis,
+    )
+
+    if research_state.completed_attempts == 0:
+        information_gain = 0.60
+
+        reasons = (
             "candidate check can establish whether an "
             "authorization candidate is reproducible",
+            "no prior completed candidate check exists",
             "bounded HTTP validation cost",
             "low baseline operational risk",
-        ),
+        )
+
+    elif research_state.residual_uncertainty >= 0.75:
+        information_gain = 0.20
+
+        reasons = (
+            "prior candidate research did not resolve the hypothesis",
+            "substantial residual uncertainty remains",
+            "additional candidate checking retains meaningful "
+            "marginal information gain",
+            "bounded HTTP validation cost",
+            "low baseline operational risk",
+        )
+
+    elif research_state.residual_uncertainty >= 0.40:
+        information_gain = 0.14
+
+        reasons = (
+            "prior candidate research partially constrained "
+            "the hypothesis",
+            "residual uncertainty remains",
+            "additional candidate checking has diminishing "
+            "marginal information gain",
+            "bounded HTTP validation cost",
+            "low baseline operational risk",
+        )
+
+    else:
+        information_gain = 0.08
+
+        reasons = (
+            "prior candidate research substantially resolved "
+            "the hypothesis",
+            "low residual uncertainty remains",
+            "additional candidate checking has low marginal "
+            "information gain",
+            "bounded HTTP validation cost",
+            "low baseline operational risk",
+        )
+
+    return _research_evaluation(
+        information_gain=information_gain,
+        cost=0.20,
+        risk=0.05,
+        reasons=reasons,
     )
 
 
