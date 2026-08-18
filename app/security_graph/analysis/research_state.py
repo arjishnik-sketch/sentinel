@@ -145,11 +145,39 @@ def build_research_state(
         hypothesis.evidence_ids
     )
 
-    observations = [
-        observation
-        for observation in graph.observations.values()
-        if observation.id in hypothesis_evidence
-    ]
+    hypothesis_experiment_ids = {
+        experiment.id
+        for experiment in experiments
+    }
+
+    observations = []
+
+    for observation in graph.observations.values():
+        if observation.id in hypothesis_evidence:
+            observations.append(observation)
+            continue
+
+        data = observation.data
+
+        if not isinstance(data, dict):
+            continue
+
+        evidence_id = data.get("evidence_id")
+
+        if (
+            isinstance(evidence_id, str)
+            and evidence_id in hypothesis_evidence
+        ):
+            observations.append(observation)
+            continue
+
+        experiment_id = data.get("experiment_id")
+
+        if (
+            isinstance(experiment_id, str)
+            and experiment_id in hypothesis_experiment_ids
+        ):
+            observations.append(observation)
 
     authorization_observations = [
         observation
