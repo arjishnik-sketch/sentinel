@@ -18,6 +18,124 @@ class TargetResearchResult:
     stopped_reason: str
 
 
+@dataclass(frozen=True)
+class TargetResearchOutcome:
+    """
+    Read-only projection of the current research frontier
+    across all hypotheses belonging to a target graph.
+
+    This model does not mutate the graph and does not make
+    security or vulnerability claims.
+    """
+
+    target: str
+    phase: str
+    hypothesis_count: int
+    active_hypotheses: int
+    exhausted_hypotheses: int
+    resolved_hypotheses: int
+    productive_actions_remaining: bool
+    reasons: tuple[str, ...] = ()
+
+
+def evaluate_target_research_outcome(
+    result: TargetResearchResult,
+) -> TargetResearchOutcome:
+    """
+    Aggregate per-hypothesis research outcomes into a
+    deterministic target-level research state.
+
+    Lifecycle state remains owned by each hypothesis.
+    Frontier exhaustion is not interpreted as security.
+    """
+
+    from ..analysis.decision import (
+        evaluate_research_outcome,
+    )
+
+    hypotheses = tuple(
+        sorted(
+            result.graph.hypotheses.values(),
+            key=lambda item: item.id,
+        )
+    )
+
+    outcomes = tuple(
+        evaluate_research_outcome(
+            result.graph,
+            hypothesis,
+        )
+        for hypothesis in hypotheses
+    )
+
+    resolved = sum(
+        1
+        for outcome in outcomes
+        if outcome.resolved
+    )
+
+    exhausted = sum(
+        1
+        for outcome in outcomes
+        if (
+            not outcome.resolved
+            and outcome.frontier_status == "EXHAUSTED"
+        )
+    )
+
+    active = sum(
+        1
+        for outcome in outcomes
+        if (
+            not outcome.resolved
+            and outcome.frontier_status == "ACTIVE"
+        )
+    )
+
+    productive = any(
+        outcome.productive_actions_remaining
+        for outcome in outcomes
+    )
+
+    if productive:
+        phase = "ACTIVE"
+        reasons = (
+            "at least one hypothesis has productive research remaining",
+        )
+    elif resolved == len(hypotheses) and hypotheses:
+        phase = "RESOLVED"
+        reasons = (
+            "all represented hypotheses are lifecycle-resolved",
+        )
+    elif hypotheses and exhausted == len(hypotheses):
+        phase = "EXHAUSTED"
+        reasons = (
+            "all represented hypotheses have exhausted productive research",
+            "hypotheses remain epistemically distinct from a security verdict",
+        )
+    elif not hypotheses:
+        phase = "EMPTY"
+        reasons = (
+            "target graph contains no hypotheses",
+        )
+    else:
+        phase = "MIXED"
+        reasons = (
+            "target contains a mixture of resolved and unresolved research paths",
+        )
+
+    return TargetResearchOutcome(
+        target=result.target,
+        phase=phase,
+        hypothesis_count=len(hypotheses),
+        active_hypotheses=active,
+        exhausted_hypotheses=exhausted,
+        resolved_hypotheses=resolved,
+        productive_actions_remaining=productive,
+        reasons=reasons,
+    )
+
+
 class TargetResearchPipeline:
     """
     Bridge the existing real-target reconnaissance system into
