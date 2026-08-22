@@ -333,6 +333,15 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 - An operator-supplied **access-policy oracle** (external ground truth, like an API authorization matrix) seeds `authorization_policy_violation` hypotheses with the principals, resources, actions, and expected outcomes the judge needs.
 - The autonomous loop probes the live target, builds a structured `AuthorizationObservation`, and the **deterministic judge fires**: a `CONFIRMED` finding is materialized *only* when observed behaviour contradicts the declared policy (proven live vs Juice Shop: `GET /api/Feedbacks` → `200`/`VALIDATED` → `CONFIRMED`; `GET /api/Users` → `401`/`DISPROVED` → **no finding**, demonstrating Sentinel never manufactures a verdict).
 
+**A second vulnerability class — security-header posture — closes the same loop:**
+
+- The same operator file may carry a `header_rules` section (or `$SENTINEL_HEADER_POLICY`) declaring, per route, the browser-level protections an endpoint MUST ship (`must_present` / `must_absent` / `must_equal` / `must_not_equal`). These seed `security_misconfiguration` hypotheses that a **separate pure judge** (`judge_header_posture`) decides by freshly re-probing the live response headers — a compliant header returns `DISPROVED` and **no finding**.
+- PATCH + PROVE reuses the *same* loopback shield, now rewriting the forwarded response headers (`set` / `remove` / `remove_if_equals`). `FIX_PROVEN` is earned only when that same pure judge flips `VALIDATED → DISPROVED` under real enforcement. The shield never stamps its own identity onto the response, so even a "strip the `Server` header" fix proves out honestly.
+
+**Target-agnostic — proven on two independent live targets:**
+
+- The engine carries no target-specific knowledge: the oracle is the only ground truth. Proven end-to-end against both **OWASP Juice Shop** (Node) and **VAmPI** (Flask) — different stacks, different routes, same engine. On VAmPI: `GET /users/v1/_debug` (leaks every user + plaintext password) → `CONFIRMED` → `FIX_PROVEN`; an anonymous `DELETE` correctly rejected `401` → `DISPROVED`/no finding; CSP + `X-Content-Type-Options` absent and a leaked `Server: Werkzeug/…` header → 3 `CONFIRMED` posture findings, all `FIX_PROVEN`; a compliant CORS control → `DISPROVED`/no finding.
+
 **Working live, end-to-end (the *patch → prove* half):**
 
 - For each `CONFIRMED` broken-access-control finding, Sentinel synthesizes a provider-agnostic **enforcement shield** (an `AccessControlRule`), renders deployable artifacts (nginx / Envoy RBAC / Caddy / portable JSON), stands the rule up on a live loopback reverse proxy, and **re-runs the same deterministic judge through it**.
@@ -343,7 +352,7 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 
 1. Multi-principal / differential authorization reasoning (compare two principals against the same resource).
 2. Wire policy-violation hypotheses from differential signals, not only from the declared oracle.
-3. Multi-class support and bug-chaining (currently authorization-only).
+3. **Bug-chaining across classes** — compose a proven authorization finding with a proven misconfiguration into a single attack narrative (two independent classes now close the loop live; chaining is the honest remaining frontier and is *not* yet implemented).
 4. Housekeeping: fix the broken legacy `hunt`, implement the `resume`/`report` stubs, and refresh the stale `README.md`.
 
 Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI that closes the full find → prove → patch → prove loop live** — every verdict traceable to the deterministic judge, never to a status code or the LLM.

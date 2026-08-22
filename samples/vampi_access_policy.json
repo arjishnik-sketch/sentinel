@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "Operator-supplied access-policy + header-posture oracle for VAmPI (github.com/erev0s/VAmPI), a deliberately vulnerable Flask API. This is EXTERNAL GROUND TRUTH, not a Sentinel finding. It is a SECOND, independent target — different stack, different routes — used only to demonstrate that the engine is target-agnostic: it freshly re-probes the live target and reports a finding solely when observed behaviour contradicts the declared policy. Run VAmPI's GET /createdb once before investigating so its user table exists.",
+  "principals": [
+    {
+      "name": "anonymous",
+      "kind": "anonymous",
+      "roles": []
+    }
+  ],
+  "rules": [
+    {
+      "principal": "anonymous",
+      "method": "GET",
+      "path": "/users/v1/_debug",
+      "resource": "full user table (usernames, emails, passwords)",
+      "action": "read",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "VAmPI's debug endpoint returns EVERY user record including plaintext passwords to an anonymous caller — a real broken-access-control / sensitive-data-exposure flaw. The judge should reproduce the contradiction (observed 200) and CONFIRM."
+    },
+    {
+      "principal": "anonymous",
+      "method": "DELETE",
+      "path": "/users/v1/sentinel_probe_nonexistent",
+      "resource": "user account (deletion)",
+      "action": "delete",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "VAmPI checks the auth token BEFORE any lookup, so an anonymous DELETE is rejected with 401 and deletes nothing (the username is intentionally non-existent, so the probe is provably non-destructive). Because the target honours this deny, the deterministic judge returns DISPROVED and NO finding is produced — the differential that proves Sentinel does not manufacture findings."
+    }
+  ],
+  "header_rules": [
+    {
+      "method": "GET",
+      "path": "/",
+      "resource": "VAmPI API root",
+      "expectations": [
+        {
+          "header": "Content-Security-Policy",
+          "requirement": "must_present",
+          "severity": "HIGH",
+          "rationale": "The Flask dev server ships no CSP. Absent on VAmPI — CONFIRMED, then injected by the shield."
+        },
+        {
+          "header": "X-Content-Type-Options",
+          "requirement": "must_present",
+          "severity": "MEDIUM",
+          "rationale": "Without 'nosniff' a browser may MIME-sniff the JSON response. Absent on VAmPI — CONFIRMED, then injected."
+        },
+        {
+          "header": "Server",
+          "requirement": "must_absent",
+          "severity": "MEDIUM",
+          "rationale": "VAmPI leaks 'Server: Werkzeug/x Python/y', disclosing the exact framework and interpreter versions. Present — CONFIRMED, then stripped by the shield (which does not re-stamp its own Server header)."
+        },
+        {
+          "header": "Access-Control-Allow-Origin",
+          "requirement": "must_not_equal",
+          "value": "*",
+          "severity": "HIGH",
+          "rationale": "COMPLIANT CONTROL: VAmPI sends no CORS header at all, so it cannot equal '*' — the judge returns DISPROVED and NO finding is produced, demonstrating the differential on a second target."
+        }
+      ]
+    }
+  ]
+}

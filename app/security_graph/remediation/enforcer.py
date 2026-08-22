@@ -283,12 +283,21 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
                 server.header_rules,
             )
 
-        self.send_response(status)
+        self.send_response_only(status)
+        # The shield must not stamp its OWN identity onto the forwarded
+        # response. Unlike send_response(), send_response_only() adds no
+        # automatic Server/Date header — so a `remove`/`remove_if_equals`
+        # posture fix (e.g. stripping an information-disclosing Server header)
+        # actually proves out, instead of being silently masked by the proxy
+        # re-introducing the very header it was asked to remove.
+        has_date = any(name.lower() == "date" for name, _ in resp_headers)
         for name, value in resp_headers:
             lname = name.lower()
             if lname in _HOP_BY_HOP or lname == "content-length":
                 continue
             self.send_header(name, value)
+        if not has_date:
+            self.send_header("Date", self.date_time_string())
         self.send_header("Content-Length", str(len(resp_body)))
         self.send_header("Connection", "close")
         self.end_headers()

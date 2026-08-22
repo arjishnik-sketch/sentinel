@@ -354,6 +354,7 @@ def test_live_enforcer_rewrites_forwarded_response_headers():
             ResponseHeaderRule("GET", "/", "Content-Security-Policy", "set",
                                "default-src 'self'"),
             ResponseHeaderRule("GET", "/", "X-Powered-By", "remove"),
+            ResponseHeaderRule("GET", "/", "Server", "remove"),
             ResponseHeaderRule("GET", "/", "Access-Control-Allow-Origin",
                                "remove_if_equals", "*"),
         )
@@ -368,6 +369,9 @@ def test_live_enforcer_rewrites_forwarded_response_headers():
         assert headers.get("content-security-policy") == "default-src 'self'"
         assert "x-powered-by" not in headers
         assert "access-control-allow-origin" not in headers
+        # The shield must strip the info-disclosing Server header AND must not
+        # re-introduce its own (send_response_only, not send_response).
+        assert "server" not in headers
         assert body == b"<html>ok</html>"
     finally:
         upstream.shutdown()
