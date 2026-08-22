@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -109,13 +110,72 @@ def evaluate_request(rules, method, path, headers) -> str:
 
     return "forward"
 
+
+@dataclass(frozen=True)
+class ResponseHeaderRule:
+    """
+    A provider-agnostic corrective mutation for one response header on a
+    route. The shield applies it to the *forwarded* response so a fresh
+    posture probe observes the corrected headers.
+
+    `op` is the enforcement primitive, not an observation:
+      set              -> emit `header: value`, replacing any upstream copy
+      remove           -> drop the header entirely
+      remove_if_equals -> drop the header only when it equals `value`
+                          (case-insensitive), e.g. a wildcard CORS origin
+    """
+
+    method: str
+    path: str
+    header: str
+    op: str
+    value: str = ""
+
+
+def apply_header_mutations(resp_headers, method, path, header_rules):
+    """
+    Pure: return a new ``[(name, value), ...]`` list with the corrective
+    header mutations for this method+path applied. No security verdict is
+    made here — this only rewrites headers the way the operator's declared
+    posture requires, so the deterministic judge can re-decide honestly.
+    """
+    method_norm = (method or "").strip().upper()
+    path_norm = path or ""
+    active = [
+        rule
+        for rule in header_rules
+        if rule.method.strip().upper() == method_norm
+        and rule.path == path_norm
+    ]
+    if not active:
+        return list(resp_headers)
+
+    result = list(resp_headers)
+    for rule in active:
+        target = rule.header.lower()
+        if rule.op == "remove":
+            result = [(n, v) for (n, v) in result if n.lower() != target]
+        elif rule.op == "remove_if_equals":
+            want = rule.value.strip().lower()
+            result = [
+                (n, v)
+                for (n, v) in result
+                if not (n.lower() == target and v.strip().lower() == want)
+            ]
+        elif rule.op == "set":
+            result = [(n, v) for (n, v) in result if n.lower() != target]
+            result.append((rule.header, rule.value))
+    return result
+
+
 class _EnforcementServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, *, rules, upstream_base):
+    def __init__(self, address, handler, *, rules, upstream_base, header_rules=()):
         super().__init__(address, handler)
         self.rules = tuple(rules)
+        self.header_rules = tuple(header_rules)
         parsed = urlsplit(upstream_base)
         self.upstream_scheme = (parsed.scheme or "http").lower()
         self.upstream_netloc = parsed.netloc
@@ -210,6 +270,19 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
             )
             return
 
+        # Corrective response-header mutations (posture remediation): the
+        # forwarded response is rewritten to satisfy the operator's declared
+        # header posture so a fresh probe through the shield observes the
+        # corrected headers. Access-control denial (above) is unaffected.
+        if server.header_rules:
+            split = urlsplit(self.path)
+            resp_headers = apply_header_mutations(
+                resp_headers,
+                self.command,
+                split.path,
+                server.header_rules,
+            )
+
         self.send_response(status)
         for name, value in resp_headers:
             lname = name.lower()
@@ -247,14 +320,17 @@ class RemediationEnforcer:
     can never reach any host other than the engagement target.
     """
 
-    def __init__(self, rules, upstream_base: str):
+    def __init__(self, rules, upstream_base: str, *, header_rules=()):
         if isinstance(rules, AccessControlRule):
             rules = (rules,)
+        if isinstance(header_rules, ResponseHeaderRule):
+            header_rules = (header_rules,)
         self._server = _EnforcementServer(
             ("127.0.0.1", 0),
             _EnforcementHandler,
             rules=rules,
             upstream_base=upstream_base,
+            header_rules=header_rules,
         )
         self._thread: threading.Thread | None = None
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Operator-supplied access-policy oracle for OWASP Juice Shop. This is EXTERNAL GROUND TRUTH (like an API spec / authorization matrix), not a Sentinel finding. Each rule declares what SHOULD be true; Sentinel freshly re-probes the live target and only reports a finding when observed behaviour contradicts the declared policy. Juice Shop is only the test fixture — the engine itself is target-agnostic.",
+  "description": "Operator-supplied access-policy + header-posture oracle for OWASP Juice Shop. This is EXTERNAL GROUND TRUTH (like an API spec / authorization matrix / security-headers baseline), not a Sentinel finding. Each rule declares what SHOULD be true; Sentinel freshly re-probes the live target and only reports a finding when observed behaviour contradicts the declared policy. Juice Shop is only the test fixture — the engine itself is target-agnostic.",
   "principals": [
     {
       "name": "anonymous",
@@ -28,6 +28,52 @@
       "decision": "deny",
       "expected_statuses": [401, 403],
       "note": "Anonymous enumeration of all user accounts must be denied. If the target honours this (returns 401/403), the deterministic judge returns DISPROVED and NO finding is produced — demonstrating that Sentinel does not manufacture findings."
+    }
+  ],
+  "header_rules": [
+    {
+      "method": "GET",
+      "path": "/",
+      "resource": "app root document",
+      "expectations": [
+        {
+          "header": "Content-Security-Policy",
+          "requirement": "must_present",
+          "severity": "HIGH",
+          "rationale": "A CSP is the primary defence against XSS and mixed-content. Juice Shop ships none — the judge should reproduce the absence and CONFIRM, then the shield injects a default CSP and the fix proves out."
+        },
+        {
+          "header": "Access-Control-Allow-Origin",
+          "requirement": "must_not_equal",
+          "value": "*",
+          "severity": "HIGH",
+          "rationale": "A wildcard CORS origin lets any site read cross-origin responses. Juice Shop returns '*' — a real misconfiguration; the shield strips the wildcard to prove the fix."
+        },
+        {
+          "header": "Referrer-Policy",
+          "requirement": "must_present",
+          "severity": "MEDIUM",
+          "rationale": "Without a Referrer-Policy the full URL can leak to third parties. Absent on Juice Shop — CONFIRMED, then injected."
+        },
+        {
+          "header": "X-Recruiting",
+          "requirement": "must_absent",
+          "severity": "LOW",
+          "rationale": "A non-standard information-disclosure header. Present on Juice Shop — CONFIRMED, then stripped by the shield."
+        },
+        {
+          "header": "X-Content-Type-Options",
+          "requirement": "must_present",
+          "severity": "MEDIUM",
+          "rationale": "COMPLIANT CONTROL: Juice Shop already sends 'nosniff', so the judge returns DISPROVED and NO finding is produced — the differential that proves Sentinel reports only reproduced contradictions."
+        },
+        {
+          "header": "X-Frame-Options",
+          "requirement": "must_present",
+          "severity": "MEDIUM",
+          "rationale": "COMPLIANT CONTROL: Juice Shop already sends 'SAMEORIGIN' — DISPROVED, no finding."
+        }
+      ]
     }
   ]
 }

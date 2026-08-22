@@ -465,6 +465,196 @@ def _remediation_panel(outcome) -> Panel:
     )
 
 
+def _header_policy_panel(policy, source: str) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    total = sum(len(rule.expectations) for rule in policy.rules)
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "declared posture",
+        f"[{_C_ACCENT}]{total}[/{_C_ACCENT}] header expectation(s) across "
+        f"{len(policy.rules)} route(s)",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    shown = 0
+    for rule in policy.rules:
+        for exp in rule.expectations:
+            if shown >= 10:
+                break
+            want = exp.requirement.replace("_", " ").upper()
+            if exp.value:
+                want = f"{want} '{exp.value}'"
+            sev_style = {
+                "CRITICAL": _C_BAD,
+                "HIGH": _C_BAD,
+                "MEDIUM": _C_WARN,
+                "LOW": _C_DIM,
+            }.get(exp.severity, _C_DIM)
+            rules.add_row(
+                f"[{sev_style}]{exp.severity:<8}[/{sev_style}] "
+                f"[white]{exp.header}[/white] "
+                f"[{_C_DIM}]{want}[/{_C_DIM}] "
+                f"[{_C_DIM}]· {rule.method} {_short(rule.path, 32)}[/{_C_DIM}]"
+            )
+            shown += 1
+
+    note = Text(
+        "\nGround truth only. A declared header expectation is a question "
+        "for the judge — a finding requires the live response to contradict "
+        "it. A compliant header yields DISPROVED and no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ HEADER POSTURE ORACLE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _posture_findings_panel(results) -> Panel:
+    """Render every posture probe verdict, including the DISPROVED ones.
+
+    Showing DISPROVED (compliant control ⇒ no finding) beside VALIDATED
+    (reproduced misconfiguration ⇒ finding) is the honest differential.
+    """
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("http", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ no finding",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = probe.status_code if probe.status_code is not None else "—"
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{code}[/white]",
+            _short(probe.reason, 62),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} misconfiguration(s) reproduced against the live "
+        f"target and CONFIRMED; compliant controls yield no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ POSTURE · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _posture_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed posture finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        op_label = {
+            "set": "SET",
+            "remove": "STRIP",
+            "remove_if_equals": "STRIP INSECURE",
+        }.get(rule.op, rule.op.upper())
+        table.add_row("strategy", plan.strategy)
+        detail = f' → "{rule.value}"' if rule.op == "set" and rule.value else ""
+        table.add_row(
+            "control",
+            f"[bold {_C_PRIMARY}]{op_label}[/bold {_C_PRIMARY}] "
+            f"[white]{rule.header}[/white]{detail} "
+            f"[{_C_DIM}]· {rule.method} {_short(rule.path, 40)}[/{_C_DIM}]",
+        )
+        table.add_row("upstream", f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]")
+
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · caddy · envoy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ POSTURE REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -497,6 +687,8 @@ def run(arg):
             f"[dim]a policy path may also be set via "
             f"$SENTINEL_ACCESS_POLICY, a source repo via "
             f"$SENTINEL_SOURCE_ROOT[/dim]\n"
+            f"[dim]header-posture rules live in a 'header_rules' section of "
+            f"the same file, or via $SENTINEL_HEADER_POLICY[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
             f"PATCH + PROVE stage[/dim]"
         )
@@ -626,6 +818,95 @@ def run(arg):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]remediation stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # --- SECURITY MISCONFIGURATION · HEADER POSTURE -----------------------
+    # A second, independent vulnerability class: does the target ship the
+    # browser-level protections the operator declared? This runs as an
+    # isolated pass on the same graph — it never perturbs the authorization
+    # decision engine above — and obeys the identical epistemic contract: an
+    # oracle declares posture, the live probe observes, a PURE judge decides,
+    # and a finding materialises only on a reproduced contradiction. A header
+    # policy may live in the same policy file (a `header_rules` section) or
+    # be pointed at via $SENTINEL_HEADER_POLICY.
+    header_policy = None
+    header_source = os.environ.get("SENTINEL_HEADER_POLICY") or policy_path
+    if header_source:
+        from app.security_graph.posture import load_header_policy
+
+        try:
+            header_policy = load_header_policy(header_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load header policy "
+                        f"'{header_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]header policy error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            header_policy = None
+
+    if header_policy is not None and header_policy.rules:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]SECURITY MISCONFIGURATION · "
+                f"HEADER POSTURE[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(_header_policy_panel(header_policy, header_source))
+        try:
+            from app.security_graph.posture import run_posture_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]probing header posture + judging live…"
+                f"[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                posture_results = run_posture_investigation(
+                    result.graph,
+                    header_policy,
+                    target_base=result.target,
+                )
+            if posture_results:
+                console.print(_posture_findings_panel(posture_results))
+
+            posture_confirmed = result.graph.findings_for(
+                kind="security_misconfiguration", status="OPEN"
+            )
+            if posture_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]POSTURE REMEDIATION · PATCH + PROVE · "
+                        f"{len(posture_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.posture import (
+                    remediate_header_findings,
+                )
+
+                with console.status(
+                    f"[{_C_OK}]injecting corrective headers + proving live…"
+                    f"[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    posture_outcomes = remediate_header_findings(result.graph)
+                for remediation in posture_outcomes:
+                    console.print(_posture_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]header posture stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

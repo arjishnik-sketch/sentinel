@@ -181,6 +181,17 @@ class TargetResearchPipeline:
             )
         )
 
+        # The security-header posture class reuses the same header-capturing
+        # HTTP fact executor under a distinct experiment kind, so the engine
+        # can dispatch header probes without any shared interpretation.
+        from ..posture.executor import SecurityHeaderExecutor
+
+        registry.register(
+            SecurityHeaderExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

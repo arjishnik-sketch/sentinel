@@ -5,6 +5,16 @@ from ..models import (
 )
 
 
+# Coarse default finding severity per hypothesis kind. This is the
+# reporting-level default only; class-specific detail (e.g. an operator's
+# declared per-header severity) is surfaced by that class's own renderer.
+_SEVERITY_BY_KIND = {
+    "authorization_policy_violation": "HIGH",
+    "security_misconfiguration": "MEDIUM",
+}
+_DEFAULT_SEVERITY = "HIGH"
+
+
 def finding_from_hypothesis(
     hypothesis: Hypothesis,
 ) -> SecurityFinding | None:
@@ -24,7 +34,7 @@ def finding_from_hypothesis(
         kind=hypothesis.kind,
         title=hypothesis.claim,
         claim=hypothesis.claim,
-        severity="HIGH",
+        severity=_SEVERITY_BY_KIND.get(hypothesis.kind, _DEFAULT_SEVERITY),
         confidence=hypothesis.confidence,
         identity=hypothesis.identity,
         evidence_ids=hypothesis.evidence_ids,
