@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "description": "Operator-supplied access-policy oracle for OWASP Juice Shop. This is EXTERNAL GROUND TRUTH (like an API spec / authorization matrix), not a Sentinel finding. Each rule declares what SHOULD be true; Sentinel freshly re-probes the live target and only reports a finding when observed behaviour contradicts the declared policy. Juice Shop is only the test fixture — the engine itself is target-agnostic.",
+  "principals": [
+    {
+      "name": "anonymous",
+      "kind": "anonymous",
+      "roles": []
+    }
+  ],
+  "rules": [
+    {
+      "principal": "anonymous",
+      "method": "GET",
+      "path": "/api/Feedbacks",
+      "resource": "customer feedback collection",
+      "action": "read",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "Feedback submitted by all users must not be readable without authentication. Juice Shop is expected to leak the whole collection to anonymous callers (a real broken-access-control flaw), so the judge should reproduce the contradiction and CONFIRM this."
+    },
+    {
+      "principal": "anonymous",
+      "method": "GET",
+      "path": "/api/Users",
+      "resource": "user account collection",
+      "action": "read",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "Anonymous enumeration of all user accounts must be denied. If the target honours this (returns 401/403), the deterministic judge returns DISPROVED and NO finding is produced — demonstrating that Sentinel does not manufacture findings."
+    }
+  ]
+}

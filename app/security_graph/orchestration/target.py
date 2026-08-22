@@ -203,7 +203,18 @@ class TargetResearchPipeline:
         target: str,
         *,
         max_cycles: int = 10,
+        access_policy=None,
     ) -> TargetResearchResult:
+        """
+        Run recon → hypotheses → adaptive research cycles.
+
+        When an operator-supplied `access_policy` (an
+        `app.security_graph.policy.AccessPolicy`) is provided, each
+        declared rule is seeded as an OPEN `authorization_policy_violation`
+        hypothesis. This only *routes* a suspicion into the existing
+        prove-chain — the deterministic judge still decides the outcome by
+        freshly re-probing the live target, so no finding is manufactured.
+        """
         if not target or not target.strip():
             raise ValueError(
                 "target cannot be empty."
@@ -259,6 +270,19 @@ class TargetResearchPipeline:
         generate_parameter_hypotheses(
             graph,
         )
+
+        # Operator-declared access policy (external ground truth) is
+        # seeded last, so its explicit allow/deny expectations become
+        # OPEN policy-violation hypotheses the deterministic judge can
+        # prove or disprove against the live target.
+        if access_policy is not None:
+            from ..policy.seed import seed_access_policy
+
+            seed_access_policy(
+                graph,
+                access_policy,
+                target_base=normalized_target,
+            )
 
         cycles = []
 

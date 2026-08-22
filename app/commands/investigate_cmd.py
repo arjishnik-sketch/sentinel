@@ -12,6 +12,7 @@ The renderer never asserts a security verdict of its own — it only
 displays what the deterministic engine decided.
 """
 
+import os
 import re
 
 from rich.console import Console, Group
@@ -316,23 +317,71 @@ def _outcome_panel(outcome, stopped_reason: str) -> Panel:
     )
 
 
-def _parse_args(arg: str) -> tuple[str, int]:
+def _policy_panel(policy, source: str) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "declared rules",
+        f"[{_C_ACCENT}]{len(policy.rules)}[/{_C_ACCENT}] "
+        "authorization expectation(s)",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for rule in policy.rules[:8]:
+        verb = "MUST DENY" if rule.decision == "deny" else "MUST ALLOW"
+        verb_style = _C_BAD if rule.decision == "deny" else _C_OK
+        rules.add_row(
+            f"[{verb_style}]{verb}[/{verb_style}]  "
+            f"[white]{rule.principal}[/white] "
+            f"[{_C_DIM}]→[/{_C_DIM}] {rule.action} "
+            f"[{_C_DIM}]{rule.method} {_short(rule.path, 48)}[/{_C_DIM}]"
+        )
+    if len(policy.rules) > 8:
+        rules.add_row(f"[{_C_DIM}](+{len(policy.rules) - 8} more)[/{_C_DIM}]")
+
+    note = Text(
+        "\nGround truth only. A declared expectation is a question for "
+        "the judge, never a finding — a contradiction must be reproduced "
+        "against the live target.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ ACCESS POLICY ORACLE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _parse_args(arg: str) -> tuple[str, int, str | None]:
     parts = arg.split()
     target = parts[0]
     max_cycles = 10
-    if len(parts) > 1:
-        try:
-            max_cycles = max(1, min(100, int(parts[1])))
-        except ValueError:
-            pass
-    return target, max_cycles
+    policy_path: str | None = None
+    for token in parts[1:]:
+        if token.isdigit():
+            max_cycles = max(1, min(100, int(token)))
+        else:
+            policy_path = token
+    if policy_path is None:
+        policy_path = os.environ.get("SENTINEL_ACCESS_POLICY") or None
+    return target, max_cycles, policy_path
 
 
 def run(arg):
     if not arg or not arg.strip():
         console.print(
-            f"[{_C_BAD}]Usage:[/{_C_BAD}] investigate <target> [cycles]\n"
-            f"[dim]e.g. investigate http://127.0.0.1:3000 12[/dim]"
+            f"[{_C_BAD}]Usage:[/{_C_BAD}] investigate <target> [cycles] "
+            f"[access_policy.json]\n"
+            f"[dim]e.g. investigate http://127.0.0.1:3000 12 "
+            f"samples/juice_shop_access_policy.json[/dim]\n"
+            f"[dim]a policy path may also be set via "
+            f"$SENTINEL_ACCESS_POLICY[/dim]"
         )
         return
 
@@ -343,10 +392,32 @@ def run(arg):
         evaluate_target_research_outcome,
     )
 
-    target, max_cycles = _parse_args(arg.strip())
+    target, max_cycles, policy_path = _parse_args(arg.strip())
 
     console.print()
     console.print(_banner())
+
+    # Load the operator-supplied access-policy oracle, if any. A bad
+    # policy fails loud rather than silently running without it.
+    access_policy = None
+    if policy_path:
+        from app.security_graph.policy import load_access_policy
+
+        try:
+            access_policy = load_access_policy(policy_path)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load access policy "
+                        f"'{policy_path}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]access policy error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            return
 
     try:
         with console.status(
@@ -357,6 +428,7 @@ def run(arg):
             result = TargetResearchPipeline().run(
                 target,
                 max_cycles=max_cycles,
+                access_policy=access_policy,
             )
     except Exception as exc:  # noqa: BLE001 — surface any failure cleanly
         console.print(
@@ -372,6 +444,8 @@ def run(arg):
 
     console.print()
     console.print(_recon_panel(result))
+    if access_policy is not None:
+        console.print(_policy_panel(access_policy, policy_path))
     console.print(_hypotheses_panel(result))
 
     console.print()
