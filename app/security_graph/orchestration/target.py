@@ -1,10 +1,14 @@
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from ...recon_engine import ReconEngine
 from ..execution import ExecutorRegistry
 from ..execution.http import HttpAuthorizationExecutor
 from ..graph import SecurityGraph
-from ..analysis.attack_surface import generate_api_hypotheses
+from ..analysis.attack_surface import (
+    generate_api_hypotheses,
+    generate_parameter_hypotheses,
+)
 from ..recon import ingest_recon
 from .cycle import run_investigation_cycle
 
@@ -160,21 +164,39 @@ class TargetResearchPipeline:
             else ReconEngine()
         )
 
-        self.executors = (
-            executors
-            if executors is not None
-            else self._default_executors()
-        )
+        # Executors may be injected (tests, dry-run). When they are not,
+        # they are built lazily in run() so they can be bound to the
+        # engagement scope derived from the target.
+        self._injected_executors = executors
 
     @staticmethod
-    def _default_executors() -> ExecutorRegistry:
+    def _default_executors(
+        scope_hosts: set[str] | None = None,
+    ) -> ExecutorRegistry:
         registry = ExecutorRegistry()
 
         registry.register(
-            HttpAuthorizationExecutor()
+            HttpAuthorizationExecutor(
+                allowed_hosts=scope_hosts,
+            )
         )
 
         return registry
+
+    @staticmethod
+    def _scope_host(normalized_target: str) -> str:
+        """
+        Derive the netloc (host[:port]) from a normalized target.
+
+        Robust to targets with or without an explicit scheme.
+        """
+
+        candidate = normalized_target.strip()
+
+        if "://" not in candidate:
+            candidate = f"http://{candidate}"
+
+        return urlparse(candidate).netloc.lower()
 
     def run(
         self,
@@ -194,6 +216,18 @@ class TargetResearchPipeline:
 
         normalized_target = (
             self.recon_engine.normalize(target)
+        )
+
+        # Derive the engagement scope from the target so live probing
+        # is bounded to exactly the host we were asked to investigate.
+        scope_host = self._scope_host(normalized_target)
+
+        executors = (
+            self._injected_executors
+            if self._injected_executors is not None
+            else self._default_executors(
+                scope_hosts={scope_host} if scope_host else None,
+            )
         )
 
         recon = (
@@ -220,12 +254,18 @@ class TargetResearchPipeline:
             graph,
         )
 
+        # Parameter-based authorization candidates (identifier-like
+        # query parameters) are a distinct, general attack surface.
+        generate_parameter_hypotheses(
+            graph,
+        )
+
         cycles = []
 
         for _ in range(max_cycles):
             result = run_investigation_cycle(
                 graph,
-                self.executors,
+                executors,
             )
 
             if result is None:

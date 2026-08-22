@@ -119,7 +119,9 @@ def authorization_observation_from_evidence(
         return None
 
     if data.get("mode") == "http":
-        allowed = authorization_decision_from_evidence(evidence)
+        allowed = authorization_validation_decision_from_evidence(
+            evidence
+        )
 
         if allowed is None:
             return None
@@ -159,6 +161,11 @@ def authorization_observation_from_evidence(
         resource_id=resource_id,
         action=action,
         allowed=allowed,
+        state=(
+            "allow"
+            if allowed
+            else "deny"
+        ),
         status_code=status_code,
         endpoint_id=data.get("endpoint_id"),
         evidence_ids=(evidence.id,),

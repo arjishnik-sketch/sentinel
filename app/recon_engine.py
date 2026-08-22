@@ -9,6 +9,7 @@ from .pipeline import Pipeline
 from .plugins.subfinder import Subfinder
 from .plugins.httpx import Httpx
 from .plugins.katana import Katana
+import re
 
 
 class ReconEngine:
@@ -31,26 +32,72 @@ class ReconEngine:
 
         target = target.strip()
 
-        target = target.replace("https://", "")
+        if "://" in target:
+            scheme, remainder = target.split("://", 1)
+            remainder = remainder.split("/", 1)[0]
+            return f"{scheme.lower()}://{remainder.lower()}"
 
-        target = target.replace("http://", "")
-
-        target = target.split("/")[0]
-
-        target = target.split(":")[0]
-
-        return target.lower()
+        return target.split("/", 1)[0].lower()
 
     @staticmethod
     def timestamp():
 
         return datetime.now(UTC).isoformat()
 
+    def run_direct_target(self, target: str):
+
+        target = self.normalize(target)
+
+        import time
+
+        start = time.time()
+
+        httpx = Httpx()
+        katana = Katana()
+
+        httpx_result = httpx.run(target)
+
+        if not httpx_result["success"]:
+            return {
+                "success": False,
+                "duration": round(
+                    time.time() - start,
+                    2,
+                ),
+                "steps": 1,
+                "results": [httpx_result],
+            }
+
+        katana_result = katana.run(
+            httpx_result["results"]
+        )
+
+        return {
+            "success": katana_result["success"],
+            "duration": round(
+                time.time() - start,
+                2,
+            ),
+            "steps": 2,
+            "results": [
+                httpx_result,
+                katana_result,
+            ],
+        }
+
     def run_pipeline(self, target: str):
 
         target = self.normalize(target)
 
-        result = self.pipeline.run(target)
+        is_direct_target = (
+            "://" in target
+            or ":" in target.split("/", 1)[0]
+        )
+
+        if is_direct_target:
+            result = self.run_direct_target(target)
+        else:
+            result = self.pipeline.run(target)
 
         recon = {
             "target": target,
@@ -73,6 +120,26 @@ class ReconEngine:
 
             elif tool == "katana":
                 recon["crawl"] = step["results"]
+
+        # Fallback: when external recon binaries are unavailable, or the
+        # tool pipeline discovered no crawlable surface, use the built-in
+        # dependency-free crawler so discovery still works in any
+        # environment. This keeps Sentinel deployable without a
+        # pre-provisioned tool chain.
+        if not recon["crawl"]:
+
+            from .security_graph.recon.crawler import crawl_target
+
+            fallback = crawl_target(target)
+
+            if fallback["crawl"]:
+
+                if not recon["alive"]:
+                    recon["alive"] = fallback["alive"]
+
+                recon["crawl"] = fallback["crawl"]
+
+                recon["source"] = "builtin_crawler"
 
         return recon
 
@@ -195,6 +262,30 @@ class ReconEngine:
             findings["parameters"]
         )
 
+
+        # Generic JS-derived API route discovery.
+        # Only explicit route-like references are promoted; JS assets themselves are not APIs.
+        for js_url in findings.get("javascript", []):
+            if not isinstance(js_url, str):
+                continue
+            try:
+                import urllib.request
+                body = urllib.request.urlopen(js_url, timeout=5).read(2_000_000).decode("utf-8", "ignore")
+            except Exception:
+                continue
+            route_patterns = (
+                r"[\"']((?:https?://[^\"']+)?/api/[A-Za-z0-9_./?=&-]+)[\"']",
+                r"[\"']((?:https?://[^\"']+)?/graphql(?:/[A-Za-z0-9_./?=&-]*)?)[\"']",
+                r"[\"']((?:https?://[^\"']+)?/rest/[A-Za-z0-9_./?=&-]+)[\"']",
+            )
+            for pattern in route_patterns:
+                for route in re.findall(pattern, body):
+                    if route.startswith("http://") or route.startswith("https://"):
+                        findings["apis"].append(route)
+                    else:
+                        from urllib.parse import urljoin
+                        findings["apis"].append(urljoin(js_url, route))
+        findings["apis"] = sorted(set(findings["apis"]))
         return findings
 
 

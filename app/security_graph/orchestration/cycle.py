@@ -12,6 +12,8 @@ from ..models import (
     Hypothesis,
     InvestigationCycleResult,
 )
+from .observations import ingest_execution_observations
+
 from ..analysis.refinement_pressure import (
     evaluate_refinement_pressure,
 )
@@ -51,6 +53,8 @@ def _execute_experiment(
             for evidence in result.evidence
         ),
         request=experiment.request,
+        capability_id=experiment.capability_id,
+        action=experiment.action,
     )
 
     graph.add_experiment(completed)
@@ -127,9 +131,25 @@ def run_investigation_cycle(
         experiment,
     )
 
-    observations = capability.observe(
+    capability_observations = capability.observe(
         graph,
         execution,
+    )
+
+    for observation in capability_observations:
+        if observation.id not in graph.observations:
+            graph.add_observation(observation)
+
+    authorization_observations = tuple(
+        ingest_execution_observations(
+            graph,
+            execution,
+        )
+    )
+
+    observations = (
+        tuple(capability_observations)
+        + tuple(authorization_observations)
     )
 
     observation_ids = tuple(

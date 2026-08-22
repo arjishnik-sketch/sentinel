@@ -1,3 +1,5 @@
+from uuid import uuid4
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -11,6 +13,12 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
 
     The executor records HTTP facts only. It does not decide whether
     the response represents a vulnerability or authorization failure.
+
+    An optional host allowlist bounds every request to the engagement
+    scope. When configured, requests to any other host are refused
+    before a connection is opened. This makes live probing safe by
+    construction: Sentinel only ever contacts the target it was told
+    to investigate.
     """
 
     kind = "authorization_http_check"
@@ -23,6 +31,40 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
         "PATCH",
         "DELETE",
     })
+
+    _ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+    def __init__(self, allowed_hosts: set[str] | None = None) -> None:
+        # When None, no scope restriction is applied (preserves the
+        # unbounded behaviour used by dry-run and unit tests). When a
+        # set is supplied, only those netlocs may be contacted.
+        self.allowed_hosts = (
+            {host.lower() for host in allowed_hosts}
+            if allowed_hosts is not None
+            else None
+        )
+
+    def _enforce_scope(self, url: str) -> None:
+        parsed = urlparse(url)
+
+        scheme = (parsed.scheme or "").lower()
+
+        if scheme not in self._ALLOWED_SCHEMES:
+            raise ValueError(
+                f"Refusing non-HTTP scheme for authorization probe: "
+                f"{scheme or 'none'}"
+            )
+
+        if self.allowed_hosts is None:
+            return
+
+        host = (parsed.netloc or "").lower()
+
+        if host not in self.allowed_hosts:
+            raise ValueError(
+                f"Refusing out-of-scope host: {host or 'none'}. "
+                f"In-scope hosts: {sorted(self.allowed_hosts)}"
+            )
 
     def execute(self, experiment: Experiment) -> ExecutionResult:
         if experiment.kind != self.kind:
@@ -49,6 +91,10 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
 
         if request_spec.timeout <= 0:
             raise ValueError("HTTP request timeout must be positive.")
+
+        # Bound the request to the engagement scope before any network
+        # activity occurs.
+        self._enforce_scope(request_spec.url)
 
         headers = dict(request_spec.headers)
 
@@ -107,7 +153,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             evidence_data["action"] = request_spec.action
 
         evidence = Evidence(
-            id=f"http:{experiment.id}",
+            id=f"http:{experiment.id}:{uuid4().hex}",
             source="http_response",
             data=evidence_data,
             confidence=1.0,

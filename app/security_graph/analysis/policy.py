@@ -38,7 +38,8 @@ def find_authorization_policy_contradictions(
             continue
 
         authorization_contradiction = (
-            policy.allowed != observation.allowed
+            observation.allowed is not None
+            and policy.allowed != observation.allowed
         )
 
         protocol_contradiction = (

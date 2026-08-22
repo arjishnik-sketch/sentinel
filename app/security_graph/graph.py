@@ -283,6 +283,66 @@ class SecurityGraph:
         return list(results)
 
 
+    def research_attempts_for(
+        self,
+        *,
+        hypothesis_id: str,
+        capability_id: str | None = None,
+        action: str | None = None,
+    ) -> list[Experiment]:
+        """
+        Return prior experiments matching a research identity.
+
+        This is deliberately capability-agnostic. The graph records
+        research provenance; decision policy determines whether a
+        repeated attempt is useful.
+
+        Matching uses only explicit experiment provenance:
+          - hypothesis_id
+          - capability_id
+          - action
+
+        No HTTP method, URL, resource ID, role, name, or status
+        inference is performed here.
+        """
+        results = self.experiments_for(
+            hypothesis_id=hypothesis_id,
+        )
+
+        if capability_id is not None:
+            results = [
+                experiment
+                for experiment in results
+                if experiment.capability_id == capability_id
+            ]
+
+        if action is not None:
+            results = [
+                experiment
+                for experiment in results
+                if experiment.action == action
+            ]
+
+        return results
+
+    def has_research_attempt(
+        self,
+        *,
+        hypothesis_id: str,
+        capability_id: str,
+        action: str,
+    ) -> bool:
+        """
+        Return whether this exact research action was already attempted.
+        """
+        return bool(
+            self.research_attempts_for(
+                hypothesis_id=hypothesis_id,
+                capability_id=capability_id,
+                action=action,
+            )
+        )
+
     def add_validation_judgment(
         self,
         judgment: ValidationJudgment,

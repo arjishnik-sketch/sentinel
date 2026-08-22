@@ -8,6 +8,7 @@ from .command_router import CommandRouter
 from .commands.search_cmd import run as search_cmd
 from .commands.skill_cmd import run as skill_cmd
 from .commands.random_cmd import run as random_cmd
+from .commands.investigate_cmd import run as investigate_cmd
 
 console=Console()
 
@@ -71,6 +72,8 @@ Commands
 
 hunt <target>
 
+investigate <target> [cycles]
+
 resume <engagement>
 
 search <keyword>
@@ -122,6 +125,8 @@ def list_cmd(arg):
 
 
 router.register("hunt",hunt)
+
+router.register("investigate",investigate_cmd)
 
 router.register("resume",resume)
 

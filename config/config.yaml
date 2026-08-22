@@ -1,5 +1,5 @@
 general:
-  model: qwen3:8b
+  model: qwen3:4b
   timeout: 20
   workers: 10
 

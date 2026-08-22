@@ -4,6 +4,18 @@ __pycache__/
 *.pyo
 *.egg-info/
 .env
+.env.*.bak
 *.db
 *.log
 js_cache/
+
+# Sentinel runtime artifacts, evidence dumps, and local backups
+.sentinel_*/
+.sentinel_*.txt
+reasoning-seam-audit-output.txt
+
+# Windows "mark of the web" alternate-data-stream droppings
+*Zone.Identifier
+
+# Claude Code local/session state
+.claude/

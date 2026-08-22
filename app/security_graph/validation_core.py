@@ -73,6 +73,21 @@ def judge_authorization_validation(
             evidence_ids=observation.evidence_ids,
         )
 
+    if observation.allowed is None:
+        return ValidationJudgment(
+            hypothesis_id=hypothesis.id,
+            experiment_id=experiment_id,
+            status="INCONCLUSIVE",
+            reason=(
+                "fresh authorization observation "
+                "did not establish allow or deny"
+            ),
+            contradiction_kind="authorization",
+            expected=policy.allowed,
+            observed=None,
+            evidence_ids=observation.evidence_ids,
+        )
+
     if policy.allowed == observation.allowed:
         return ValidationJudgment(
             hypothesis_id=hypothesis.id,

@@ -36,13 +36,13 @@ def find_authorization_differentials(
         allowed = sorted({
             item.principal_id
             for item in items
-            if item.allowed
+            if item.allowed is True
         })
 
         denied = sorted({
             item.principal_id
             for item in items
-            if not item.allowed
+            if item.allowed is False
         })
 
         differential = AuthorizationDifferential(

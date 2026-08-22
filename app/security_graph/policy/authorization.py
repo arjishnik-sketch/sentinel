@@ -12,7 +12,7 @@ class AuthorizationPolicy:
 def _action_matches(relationship, action: str) -> bool:
     metadata = dict(relationship.metadata)
 
-    return metadata.get("action") == action
+    return action in metadata.get("actions", ())
 
 
 def authorization_expectation(

@@ -1,4 +1,12 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .analysis.decision import (
+        ResearchIdentityInformationContext,
+        ResearchIdentityInformationState,
+        ResearchIdentityOutcome,
+    )
 from typing import Any
 
 
@@ -66,7 +74,19 @@ class AuthorizationObservation:
     principal_id: str
     resource_id: str
     action: str
-    allowed: bool
+
+    # Binary authorization outcome remains available for
+    # confirmed ALLOW / DENY observations.
+    #
+    # For UNKNOWN observations this field is None.
+    allowed: bool | None
+
+    # Explicit three-state observation semantics:
+    #   "allow"   -> authorization was observed as allowed
+    #   "deny"    -> authorization was observed as denied
+    #   "unknown" -> evidence did not establish either outcome
+    state: str = "unknown"
+
     status_code: int | None = None
     endpoint_id: str | None = None
     evidence_ids: tuple[str, ...] = ()
@@ -157,6 +177,8 @@ class Experiment:
     status: str = "PLANNED"
     evidence_ids: tuple[str, ...] = ()
     request: HttpRequestSpec | None = None
+    capability_id: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,6 +249,11 @@ class ResearchCandidate:
     refinement_level: str = "NO_PRESSURE"
     refinement_required: bool = False
     refinement_uncertainty: float = 0.0
+    research_outcome: "ResearchIdentityOutcome | None" = None
+    research_information_state: "ResearchIdentityInformationState | None" = None
+    research_information_context: (
+        "ResearchIdentityInformationContext | None"
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +271,13 @@ class ResearchDecision:
     score: float
     rationale: tuple[str, ...] = ()
     rejected_candidate_ids: tuple[str, ...] = ()
+    # Advisory provenance (display/telemetry only). These record whether
+    # the bounded AI advisor's preference coincided with the selected
+    # candidate and what it said. They never carry authority: the
+    # deterministic score above remains the sole basis for selection.
+    ai_influenced: bool = False
+    ai_confidence: float | None = None
+    ai_reasoning: str = ""
 
 
 @dataclass(frozen=True)

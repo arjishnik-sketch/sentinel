@@ -1,5 +1,5 @@
 from .experiment import plan_authorization_recheck
-from .candidate import plan_authorization_candidate
+from .candidate import plan_authorization_candidate, resolve_authorization_target
 from .validation import plan_authorization_policy_validation
 
 __all__ = [

@@ -1,6 +1,6 @@
-from .plugins.subfinder import Subfinder
-from .plugins.httpx import Httpx
-from .plugins.katana import Katana
+from .subfinder import Subfinder
+from .httpx import Httpx
+from .katana import Katana
 
 target="meta.com"
 

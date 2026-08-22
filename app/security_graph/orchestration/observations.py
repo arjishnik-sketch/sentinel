@@ -40,9 +40,6 @@ def ingest_execution_observations(
                 )
             )
 
-            if allowed is None:
-                continue
-
             request = experiment.request
 
             if (
@@ -54,12 +51,20 @@ def ingest_execution_observations(
 
             data = evidence.data
 
+            if allowed is True:
+                state = "allow"
+            elif allowed is False:
+                state = "deny"
+            else:
+                state = "unknown"
+
             observation = AuthorizationObservation(
                 id=f"authobs:{evidence.id}",
                 principal_id=request.principal_id,
                 resource_id=request.resource_id,
                 action=request.action,
                 allowed=allowed,
+                state=state,
                 status_code=data.get("status_code"),
                 endpoint_id=data.get("endpoint_id"),
                 evidence_ids=(evidence.id,),

@@ -96,6 +96,24 @@ class ResearchCapability:
             hypothesis,
         )
 
+    def identity_information_applicable(
+        self,
+        graph: SecurityGraph,
+        hypothesis: Hypothesis,
+        information_state,
+    ) -> bool:
+        """
+        Determine whether this capability's existing information-gain
+        semantics apply to the current exact research identity.
+
+        This is a generic derived semantic hook. It does not calculate
+        information value, alter capability evaluation, determine
+        eligibility, retry policy, ranking, or candidate score.
+
+        The default preserves the existing capability contract.
+        """
+        return True
+
     def evaluate(
         self,
         graph: SecurityGraph,
@@ -269,10 +287,7 @@ def _refine_authorization(
     authorization_observations = tuple(
         observation
         for observation in observations
-        if (
-            observation.id in graph.authorization_observations
-            or observation.kind == "authorization"
-        )
+        if observation.id in graph.authorization_observations
     )
 
     if not authorization_observations:
@@ -820,7 +835,7 @@ DEFAULT_RESEARCH_CAPABILITIES.register(
     ResearchCapability(
         id="authorization.candidate_check",
         action="test_authorization_candidate",
-        executor_kind="authorization_candidate_check",
+        executor_kind="authorization_http_check",
         applicable=_authorization_candidate_applicable,
         evaluate_fn=_evaluate_candidate_check,
         planner=_plan_authorization_candidate,

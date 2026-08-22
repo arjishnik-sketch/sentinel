@@ -88,7 +88,8 @@ class GraphStore:
                 principal_id TEXT NOT NULL,
                 resource_id TEXT NOT NULL,
                 action TEXT NOT NULL,
-                allowed INTEGER NOT NULL,
+                allowed INTEGER,
+                state TEXT NOT NULL DEFAULT 'unknown',
                 status_code INTEGER,
                 endpoint_id TEXT,
                 evidence_ids TEXT NOT NULL
@@ -267,6 +268,7 @@ class GraphStore:
                         resource_id,
                         action,
                         allowed,
+                        state,
                         status_code,
                         endpoint_id,
                         evidence_ids
@@ -278,7 +280,12 @@ class GraphStore:
                         item.principal_id,
                         item.resource_id,
                         item.action,
-                        int(item.allowed),
+                        (
+                            None
+                            if item.allowed is None
+                            else int(item.allowed)
+                        ),
+                        item.state,
                         item.status_code,
                         item.endpoint_id,
                         json.dumps(item.evidence_ids),
@@ -588,6 +595,7 @@ class GraphStore:
                 resource_id,
                 action,
                 allowed,
+                state,
                 status_code,
                 endpoint_id,
                 evidence_ids
@@ -600,7 +608,12 @@ class GraphStore:
                     principal_id=row["principal_id"],
                     resource_id=row["resource_id"],
                     action=row["action"],
-                    allowed=bool(row["allowed"]),
+                    allowed=(
+                        None
+                        if row["allowed"] is None
+                        else bool(row["allowed"])
+                    ),
+                    state=row["state"],
                     status_code=row["status_code"],
                     endpoint_id=row["endpoint_id"],
                     evidence_ids=tuple(

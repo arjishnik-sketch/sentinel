@@ -72,18 +72,23 @@ def plan_authorization_policy_validation(
     if request is None:
         return None
 
+    identity = hypothesis.identity
+
+    if identity is None:
+        return None
+
     if (
-        request.principal_id is None
-        or request.resource_id is None
-        or request.action is None
+        identity.principal_id is None
+        or identity.resource_id is None
+        or identity.action is None
     ):
         return None
 
     policy = authorization_policy(
         graph,
-        principal_id=request.principal_id,
-        resource_id=request.resource_id,
-        action=request.action,
+        principal_id=identity.principal_id,
+        resource_id=identity.resource_id,
+        action=identity.action,
     )
 
     if policy is None:
@@ -95,9 +100,9 @@ def plan_authorization_policy_validation(
         headers=request.headers,
         body=request.body,
         timeout=request.timeout,
-        principal_id=request.principal_id,
-        resource_id=request.resource_id,
-        action=request.action,
+        principal_id=identity.principal_id,
+        resource_id=identity.resource_id,
+        action=identity.action,
         expected_statuses=policy.expected_statuses,
         expected_outcome=(
             "allow"
@@ -106,8 +111,17 @@ def plan_authorization_policy_validation(
         ),
     )
 
+    existing_attempts = graph.experiments_for(
+        hypothesis_id=hypothesis.id,
+    )
+
+    attempt_number = len(existing_attempts) + 1
+
     return Experiment(
-        id=f"exp:validation:{hypothesis.id}",
+        id=(
+            f"exp:validation:{hypothesis.id}:"
+            f"attempt:{attempt_number}"
+        ),
         hypothesis_id=hypothesis.id,
         kind="authorization_http_check",
         description=(
@@ -118,4 +132,6 @@ def plan_authorization_policy_validation(
         ),
         status="PLANNED",
         request=validation_request,
+        capability_id="authorization.policy_validation",
+        action="validate_hypothesis",
     )

@@ -24,15 +24,13 @@ def plan_next_authorization_candidate(
     if hypothesis.kind != "authorization_candidate":
         return None
 
-    principal = select_principal(graph)
-
-    if principal is None:
-        return None
-
     experiment = plan_authorization_candidate(
+        graph,
         hypothesis,
-        principal_id=principal.id,
     )
+
+    if experiment is None:
+        return None
 
     graph.add_experiment(experiment)
 
