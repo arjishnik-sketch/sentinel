@@ -4,7 +4,7 @@
 
 # Sentinel — User Guide
 
-**Autonomous authorization research for live web targets — find → reason → prove, evidence-driven, with a bounded advisory AI.**
+**Autonomous authorization research for live web targets — find → reason → prove → patch → prove, evidence-driven, with a bounded advisory AI.**
 
 Sentinel points itself at a live HTTP target, recons the attack surface, forms conservative authorization hypotheses, and runs an adaptive research loop that ranks and probes them — showing every decision on an auditable "decision board." It is a local-first cyber-reasoning agent built for the AI Kavach challenge.
 
@@ -27,10 +27,10 @@ Point `OLLAMA_URL` at your Ollama server, start a target, then:
 At the `Sentinel > ` prompt:
 
 ```bash
-investigate http://127.0.0.1:3000 12
+investigate http://127.0.0.1:3000 12 samples/juice_shop_access_policy.json
 ```
 
-Watch the decision board. Type `exit` to leave. Everything below explains each piece in depth.
+Watch the decision board carry a live target through the full loop: recon → hypotheses → adaptive cycles → a `CONFIRMED` broken-access-control finding → a `FIX PROVEN` remediation (the shield denies the anonymous caller `403` under the same judge). Type `exit` to leave. Everything below explains each piece in depth.
 
 ---
 
@@ -48,8 +48,7 @@ Watch the decision board. Type `exit` to leave. Everything below explains each p
 
 - Not a signature scanner and not an exploit script.
 - Not an "LLM wrapper." The AI only breaks ties among equally top-scored candidates; the deterministic score is always authoritative.
-- Not (yet) a full find→reason→prove system end-to-end. The *find* half runs live today; the *reason/prove* half is implemented but not yet reachable autonomously (see **Roadmap / honest status**).
-- Not a patching tool. No remediation stage exists today.
+- Not a manufactured-verdict tool. A `CONFIRMED` finding requires the deterministic judge to reproduce a contradiction against an operator-declared policy, and a `FIX_PROVEN` remediation requires that *same* judge to flip to `DISPROVED` under live enforcement — never inferred from a status code.
 
 ---
 
@@ -230,7 +229,19 @@ Below the rows:
 
 ### CONFIRMED FINDINGS panel
 
-A table (severity / title / confidence / status) of hypotheses that reached `CONFIRMED`. **Today, autonomous runs print instead:** *"No authorization findings were CONFIRMED in this run. Confirmation requires a reproduced authorization contradiction under the deterministic judge — never an HTTP status code alone."* That message is by design, not a crash.
+A table (severity / title / confidence / status) of hypotheses that reached `CONFIRMED`. A finding appears **only** when the deterministic judge reproduces a contradiction between the live target and an operator-declared access policy. Without a policy oracle (or when the target honours the policy), autonomous runs print instead: *"No authorization findings were CONFIRMED in this run. Confirmation requires a reproduced authorization contradiction under the deterministic judge — never an HTTP status code alone."* That message is by design, not a crash.
+
+### REMEDIATION · PATCH + PROVE panel (one per confirmed finding)
+
+Shown after the findings table whenever at least one broken-access-control finding was `CONFIRMED` (unless `$SENTINEL_SKIP_REMEDIATION` is set). For each finding Sentinel synthesizes a corrective control, enforces it on a live loopback shield, and re-runs the *same* deterministic judge through it:
+
+- **verdict** — `✔ FIX PROVEN` / `✘ FIX NOT PROVEN` / `— NOT APPLICABLE` / `✘ ERROR`.
+- **control** — the derived rule, e.g. `MUST DENY anonymous → GET /api/Feedbacks`.
+- **live prove** — the before/after re-probe through the enforcement shield: `before 200 VALIDATED → after 403 DISPROVED`. `FIX PROVEN` is reported *only* on that `VALIDATED → DISPROVED` flip under real enforcement.
+- **artifacts** — the deployable configs rendered from the rule (`portable-json · nginx · envoy-rbac · caddy`).
+- **source patch** — `GENERATED` / `ADVISORY` / `NOT_PROVIDED`, plus framework and file when a source repo was supplied.
+
+The confirmed hypothesis and finding are structurally isolated during verification and are never mutated.
 
 ### RESEARCH FRONTIER panel
 
@@ -248,7 +259,7 @@ All commands are entered at the `Sentinel > ` prompt. The command word is split 
 
 | Command | Syntax | What it does |
 |---|---|---|
-| **investigate** | `investigate <target> [cycles]` | **Primary.** Runs the full autonomous authorization-research loop (recon → hypotheses → adaptive cycles → findings) and renders the decision board. `cycles` defaults to 10, clamped 1–100. Empty arg prints usage. |
+| **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs to confirm findings; an existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage. Empty arg prints usage. |
 | hunt | `hunt <target>` | Legacy recon+RAG pipeline. **Currently broken** (raises `NameError` in `core.py`); superseded by `investigate`. |
 | findings | `findings` | Prints the in-memory findings of the session's `SentinelCore`. Empty unless a prior `hunt` populated it — `investigate` uses a separate graph and does not fill it. |
 | search | `search <keyword>` | Full-text search of the local knowledge DB (table of ID / Title / Automation). |
@@ -308,7 +319,7 @@ ollama pull qwen3:4b
 
 ## Roadmap / honest status
 
-Sentinel today is a **polished, safe, deterministic find-and-rank engine with a real advisory-AI seam, atop a complete-but-dormant prove subsystem.**
+Sentinel today is a **polished, safe, deterministic engine that closes the full find → reason → prove → patch → prove loop live**, with a real advisory-AI seam that never holds authority.
 
 **Working live, end-to-end (the *find* half):**
 
@@ -317,19 +328,22 @@ Sentinel today is a **polished, safe, deterministic find-and-rank engine with a 
 - A reachable, bounded AI advisory tiebreak (score stays authoritative).
 - Scope-bounded, non-destructive HTTP execution recording facts only.
 
-**Built but not yet reachable autonomously (the *reason/prove* half):**
+**Working live, end-to-end (the *reason / prove* half):**
 
-- **No autonomous `CONFIRMED` finding is produced end-to-end today.** This is a *bootstrap gap*, not missing code.
-- The candidate planner deliberately leaves `principal_id`/`resource_id`/`action`/`expected_outcome` empty, so the load-bearing `AuthorizationObservation` is never created → the deterministic judge never fires → no hypothesis reaches `CONFIRMED`.
-- The judge, finding materialization, and prove/re-validation machinery are implemented and coherent, but gated behind hypothesis kinds (`authorization_policy_violation`) and policy edges that the autonomous flow never creates.
+- An operator-supplied **access-policy oracle** (external ground truth, like an API authorization matrix) seeds `authorization_policy_violation` hypotheses with the principals, resources, actions, and expected outcomes the judge needs.
+- The autonomous loop probes the live target, builds a structured `AuthorizationObservation`, and the **deterministic judge fires**: a `CONFIRMED` finding is materialized *only* when observed behaviour contradicts the declared policy (proven live vs Juice Shop: `GET /api/Feedbacks` → `200`/`VALIDATED` → `CONFIRMED`; `GET /api/Users` → `401`/`DISPROVED` → **no finding**, demonstrating Sentinel never manufactures a verdict).
+
+**Working live, end-to-end (the *patch → prove* half):**
+
+- For each `CONFIRMED` broken-access-control finding, Sentinel synthesizes a provider-agnostic **enforcement shield** (an `AccessControlRule`), renders deployable artifacts (nginx / Envoy RBAC / Caddy / portable JSON), stands the rule up on a live loopback reverse proxy, and **re-runs the same deterministic judge through it**.
+- `FIX_PROVEN` is reported *only* when that judge flips `VALIDATED → DISPROVED` under real enforcement (observed `403`); anything else is `FIX_FAILED` / `NOT_APPLICABLE` / `ERROR`. The confirmed hypothesis and finding are structurally isolated and never mutated by verification.
+- **URL-only by default** (no source code required — the shield *is* the deployable fix). When the target's source repository is also supplied (positional dir arg or `$SENTINEL_SOURCE_ROOT`), Sentinel additionally emits a root-cause unified-diff authorization guard; its live proof needs the operator's own rebuild.
 
 **Next milestones (in rough priority order):**
 
-1. **Close the bootstrap gap** — seed principals + expected outcomes so structured authorization observations are created and the judge can run.
-2. Wire differential / policy-violation hypotheses into the autonomous loop; register the currently-unregistered recheck executor (today a dry-run stub).
-3. Multi-principal / differential authorization reasoning.
-4. A remediation ("prove-then-patch") stage — explicitly absent today by design.
-5. Multi-class support and bug-chaining (currently authorization-only).
-6. Housekeeping: fix the broken legacy `hunt`, implement the `resume`/`report` stubs, and refresh the stale `README.md`.
+1. Multi-principal / differential authorization reasoning (compare two principals against the same resource).
+2. Wire policy-violation hypotheses from differential signals, not only from the declared oracle.
+3. Multi-class support and bug-chaining (currently authorization-only).
+4. Housekeeping: fix the broken legacy `hunt`, implement the `resume`/`report` stubs, and refresh the stale `README.md`.
 
-Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI** — and present confirmed findings as the clearly-scoped next step, not a shipped capability.
+Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI that closes the full find → prove → patch → prove loop live** — every verdict traceable to the deterministic judge, never to a status code or the LLM.

@@ -358,30 +358,147 @@ def _policy_panel(policy, source: str) -> Panel:
     )
 
 
-def _parse_args(arg: str) -> tuple[str, int, str | None]:
+def _remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed finding.
+
+    The renderer states only what the deterministic verifier reported. A
+    FIX_PROVEN badge is shown solely when the same judge that confirmed the
+    finding flipped to DISPROVED under live enforcement — never inferred.
+    """
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]MUST DENY[/bold {_C_BAD}] "
+            f"[white]{rule.principal_name}[/white] "
+            f"[{_C_DIM}]({rule.principal_kind})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 48)}[/white]",
+        )
+        table.add_row("upstream", f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]")
+
+    # The live PROVE — before/after through the enforcement shield.
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    artifacts = outcome.artifacts
+    if artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · envoy-rbac · caddy[/{_C_PRIMARY}]",
+        )
+
+    patch = outcome.source_patch
+    if patch is not None:
+        patch_style = {
+            "GENERATED": _C_OK,
+            "ADVISORY": _C_WARN,
+            "NOT_PROVIDED": _C_DIM,
+        }.get(patch.status, _C_DIM)
+        detail = patch.framework if patch.framework != "unknown" else ""
+        loc = f" · {patch.file_path}" if patch.file_path else ""
+        table.add_row(
+            "source patch",
+            f"[{patch_style}]{patch.status}[/{patch_style}] "
+            f"[{_C_DIM}]{detail}{loc}[/{_C_DIM}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(
+            Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM)
+        )
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
+def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
     max_cycles = 10
     policy_path: str | None = None
+    source_root: str | None = None
     for token in parts[1:]:
         if token.isdigit():
             max_cycles = max(1, min(100, int(token)))
+        elif os.path.isdir(token):
+            # An existing directory is the target's source repository,
+            # enabling the optional root-cause source patch.
+            source_root = token
         else:
             policy_path = token
     if policy_path is None:
         policy_path = os.environ.get("SENTINEL_ACCESS_POLICY") or None
-    return target, max_cycles, policy_path
+    if source_root is None:
+        source_root = os.environ.get("SENTINEL_SOURCE_ROOT") or None
+    return target, max_cycles, policy_path, source_root
 
 
 def run(arg):
     if not arg or not arg.strip():
         console.print(
             f"[{_C_BAD}]Usage:[/{_C_BAD}] investigate <target> [cycles] "
-            f"[access_policy.json]\n"
+            f"[access_policy.json] [source_repo_dir]\n"
             f"[dim]e.g. investigate http://127.0.0.1:3000 12 "
             f"samples/juice_shop_access_policy.json[/dim]\n"
             f"[dim]a policy path may also be set via "
-            f"$SENTINEL_ACCESS_POLICY[/dim]"
+            f"$SENTINEL_ACCESS_POLICY, a source repo via "
+            f"$SENTINEL_SOURCE_ROOT[/dim]\n"
+            f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
+            f"PATCH + PROVE stage[/dim]"
         )
         return
 
@@ -392,7 +509,7 @@ def run(arg):
         evaluate_target_research_outcome,
     )
 
-    target, max_cycles, policy_path = _parse_args(arg.strip())
+    target, max_cycles, policy_path, source_root = _parse_args(arg.strip())
 
     console.print()
     console.print(_banner())
@@ -462,5 +579,56 @@ def run(arg):
 
     console.print()
     console.print(_findings_panel(result))
+
+    # --- PATCH + PROVE ----------------------------------------------------
+    # For every CONFIRMED authorization finding, autonomously synthesize a
+    # corrective control, enforce it on a live loopback shield, and prove
+    # the contradiction no longer reproduces under the same deterministic
+    # judge. Opt-out via $SENTINEL_SKIP_REMEDIATION.
+    skip_remediation = bool(os.environ.get("SENTINEL_SKIP_REMEDIATION"))
+    confirmed = result.graph.findings_for(
+        kind="authorization_policy_violation", status="OPEN"
+    )
+    if confirmed and not skip_remediation:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_OK}]REMEDIATION · PATCH + PROVE · "
+                f"{len(confirmed)} FINDING(S)[/bold {_C_OK}]",
+                style=_C_OK,
+            )
+        )
+        if source_root:
+            console.print(
+                Text(
+                    f"  source repo provided → root-cause patch enabled "
+                    f"({_short(source_root, 60)})",
+                    style=_C_DIM,
+                )
+            )
+        try:
+            with console.status(
+                f"[{_C_OK}]synthesizing controls + proving fixes live…"
+                f"[/{_C_OK}]",
+                spinner="dots",
+            ):
+                from app.security_graph.remediation import (
+                    remediate_confirmed_findings,
+                )
+
+                outcomes = remediate_confirmed_findings(
+                    result.graph, source_root=source_root
+                )
+            for remediation in outcomes:
+                console.print(_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]remediation stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
     console.print(_outcome_panel(outcome, result.stopped_reason))
     console.print()
