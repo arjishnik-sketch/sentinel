@@ -66,6 +66,13 @@ def main() -> None:
         reconstruct_set_cookie, session_baseline_cookie_policy,
     )
     from app.security_graph.cookies import parse_cookie_policy
+    from app.security_graph.privesc import (
+        load_privesc_policy, run_privesc_investigation, remediate_privesc_findings,
+    )
+    from app.security_graph.injection import (
+        load_injection_policy, run_injection_investigation,
+        remediate_injection_findings,
+    )
 
     server, base = start_stub()
     policy_path = os.path.join(HERE, "shot_policy.json")
@@ -137,6 +144,36 @@ def main() -> None:
         c = _console()
         c.print(inv._outcome_panel(outcome, result.stopped_reason))
         _save(c, "outcome")
+
+        # 6b) PRIVILEGE ESCALATION (find + prove) — three-probe differential
+        pv_policy = load_privesc_policy(policy_path)
+        pv_res = run_privesc_investigation(result.graph, pv_policy,
+                                           target_base=base)
+        pv_conf = list(result.graph.findings_for(
+            kind="privilege_escalation", status="OPEN"))
+        pv_out = remediate_privesc_findings(result.graph)
+        c = _console()
+        c.print(Rule("[bold #e84bff]PRIVILEGE ESCALATION · LOGIN MATRIX"
+                     "[/bold #e84bff]", style="#e84bff"))
+        c.print(inv._privesc_matrix_panel(pv_policy, policy_path))
+        c.print(inv._privesc_findings_panel(pv_res))
+        for o in pv_out:
+            c.print(inv._privesc_remediation_panel(o))
+        _save(c, "privesc")
+
+        # 6c) SQL INJECTION (find + prove) — three-way boolean differential
+        ij_policy = load_injection_policy(policy_path)
+        ij_res = run_injection_investigation(result.graph, ij_policy,
+                                             target_base=base)
+        ij_out = remediate_injection_findings(result.graph)
+        c = _console()
+        c.print(Rule("[bold #e84bff]SQL INJECTION · BOOLEAN DIFFERENTIAL"
+                     "[/bold #e84bff]", style="#e84bff"))
+        c.print(inv._injection_matrix_panel(ij_policy, policy_path))
+        c.print(inv._injection_findings_panel(ij_res))
+        for o in ij_out:
+            c.print(inv._injection_remediation_panel(o))
+        _save(c, "injection")
 
         # 8) LOGIN TESTER — a captured authenticated session (real render path)
         session = CapturedSession(

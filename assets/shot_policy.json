@@ -59,5 +59,41 @@
           "rationale": "COMPLIANT CONTROL: the cookie carries no SameSite=None, so 'must not equal None' holds — DISPROVED, no finding." }
       ]
     }
-  ]
+  ],
+  "privesc_matrix": {
+    "success_statuses": [200, 201, 204],
+    "principals": [
+      { "name": "alice", "role": "user",
+        "headers": { "Authorization": "Bearer alice-token" },
+        "control": { "method": "GET", "path": "/api/users/alice/profile" } },
+      { "name": "bob", "role": "user",
+        "headers": { "Authorization": "Bearer bob-token" },
+        "control": { "method": "GET", "path": "/api/users/bob/profile" } }
+    ],
+    "checks": [
+      { "type": "horizontal", "attacker": "alice", "victim": "bob",
+        "breach": { "method": "GET", "path": "/api/users/bob/profile" },
+        "severity": "HIGH",
+        "rationale": "HORIZONTAL (IDOR/BOLA). alice reaches her own profile (control, 200) but the demo target has no object-level ownership check, so alice also reads bob's profile (breach, 200) while an anonymous caller is denied (baseline, 401) — CONFIRMED. The shield then denies alice's cross-tenant request and the boundary proves out." },
+      { "type": "vertical", "attacker": "alice",
+        "breach": { "method": "GET", "path": "/api/admin/dashboard" },
+        "severity": "CRITICAL",
+        "rationale": "VERTICAL. alice is a plain user; the demo target has no role check, so her session reaches the admin dashboard (breach, 200) while anonymous is denied (baseline, 401) and her control succeeds — CONFIRMED, then denied by the shield." },
+      { "type": "horizontal", "attacker": "alice", "victim": "bob",
+        "breach": { "method": "GET", "path": "/api/users/bob/orders" },
+        "severity": "HIGH",
+        "rationale": "COMPLIANT CONTROL. The /orders endpoint DOES enforce ownership, so alice's cross-tenant breach is denied (403) even though her control succeeds — the judge returns DISPROVED and NO finding, the escalation analogue of the compliant header/cookie/injection controls." }
+    ]
+  },
+  "injection_matrix": {
+    "success_statuses": [200, 201, 204],
+    "checks": [
+      { "method": "GET", "path": "/rest/products/search", "param": "q", "location": "query",
+        "baseline_value": "zqxjv", "severity": "HIGH",
+        "rationale": "CONFIRMED-expected. `q` is concatenated (twice) into a grouped `WHERE ((name LIKE '%q%' OR description LIKE '%q%') AND deletedAt IS NULL)` query. The benign baseline 'zqxjv' matches nothing (legitimate empty result); the length-matched FALSE arm reproduces that empty result while the TRUE arm dumps the whole table — TRUE != FALSE anchored to the baseline => a boolean-blind SQL injection. The request-guard shield then blocks the payload and the fix proves out. The baseline is operator ground truth, not an invented payload." },
+      { "method": "GET", "path": "/api/Products", "param": "name", "location": "query",
+        "baseline_value": "apple", "severity": "HIGH",
+        "rationale": "COMPLIANT CONTROL. The /api/Products `name` filter is a BOUND (parameterised) equality, not concatenation, so every length-matched boolean pair returns the same response — TRUE == FALSE for all pairs, the differential collapses and the judge returns DISPROVED with NO finding." }
+    ]
+  }
 }

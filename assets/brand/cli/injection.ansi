@@ -1,0 +1,47 @@
+[38;2;232;75;255m─────────────────────────────── [0m[1;38;2;232;75;255mSQL INJECTION · BOOLEAN DIFFERENTIAL[0m[38;2;232;75;255m ───────────────────────────────[0m
+[95m╭─[0m[95m────────────────────────────────[0m[95m [0m[95m▐ SQL-INJECTION MATRIX ORACLE[0m[95m [0m[95m─────────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m          source[0m[38;5;246m  [0m[96m/mnt/d/scanner proj/sentinel/assets/shot_policy.json[0m                          [95m│[0m
+[95m│[0m  [38;5;246minjection matrix[0m[38;5;246m  [0m[95m2[0m[37m declared injectable surface(s)                    [0m                          [95m│[0m
+[95m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mq[0m[38;5;246m [0m[38;5;246mMUST NOT alter the query ·[0m[38;5;246m [0m[38;5;246mquery · GET /rest/products/search[0m                         [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mname[0m[38;5;246m [0m[38;5;246mMUST NOT alter the query ·[0m[38;5;246m [0m[38;5;246mquery · GET /api/Products[0m[38;5;246m     [0m                         [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246mGround truth only. Each surface is proven by a THREE-WAY BOOLEAN differential on the live [0m      [95m│[0m
+[95m│[0m  [38;5;246mtarget: a benign BASELINE probe (which must return a legitimate response — the anchor), plus [0m   [95m│[0m
+[95m│[0m  [38;5;246mlength-matched (TRUE, FALSE) payload pairs. Because each pair differs by a single digit, a [0m     [95m│[0m
+[95m│[0m  [38;5;246mreflected payload contributes identical bytes to both arms — so any TRUE≠FALSE difference can [0m  [95m│[0m
+[95m│[0m  [38;5;246monly come from the backend evaluating the injected boolean. A bare status code is never the [0m    [95m│[0m
+[95m│[0m  [38;5;246mverdict.[0m                                                                                        [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[95m╭─[0m[95m────────────────────────────[0m[95m [0m[95m▐ SQL INJECTION · DETERMINISTIC JUDGE[0m[95m [0m[95m─────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [95m┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[0m  [95m│[0m
+[95m│[0m  [95m┃[0m[1;95m [0m[1;95mverdict       [0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mseverity[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mparam[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mbaseline[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mclaim                                      [0m[1;95m [0m[95m┃[0m  [95m│[0m
+[95m│[0m  [95m┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩[0m  [95m│[0m
+[95m│[0m  [95m│[0m [92m○ no injection[0m [95m│[0m [38;5;246mHIGH[0m     [95m│[0m [37mname[0m  [95m│[0m      [38;5;246m200[0m [95m│[0m no boolean payload toggled the response of  [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m                [95m│[0m          [95m│[0m       [95m│[0m          [95m│[0m 'n…                                         [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m      [95m│[0m [38;5;246mHIGH[0m     [95m│[0m [37mq[0m     [95m│[0m      [38;5;246m200[0m [95m│[0m a length-matched boolean pair on 'q' (GET   [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m                [95m│[0m          [95m│[0m       [95m│[0m          [95m│[0m /re…                                        [95m│[0m  [95m│[0m
+[95m│[0m  [95m└────────────────┴──────────┴───────┴──────────┴─────────────────────────────────────────────┘[0m  [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m1 SQL injection(s) reproduced against the live target — a length-matched boolean payload [0m       [95m│[0m
+[95m│[0m  [38;5;246mprovably toggled the backend query while one arm reproduced the legitimate baseline — and [0m      [95m│[0m
+[95m│[0m  [38;5;246mCONFIRMED; a parameter that does not influence the query yields no finding.[0m                     [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m───────────────────────────[0m[92m [0m[92m▐ INJECTION REMEDIATION · PATCH + PROVE[0m[92m [0m[92m────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                       [0m                                 [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37minjection_request_guard                            [0m                                 [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;91mREQUEST-GUARD[0m[37m [0m[37mq[0m[37m [0m[38;5;246m(query)[0m[37m [0m[38;5;246m→[0m[37m [0m[37mGET /rest/products/search[0m                                 [92m│[0m
+[92m│[0m  [38;5;246mroot cause[0m[38;5;246m  [0m[38;5;246mparameterised (prepared) query in the handler[0m[37m      [0m                                 [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:39217[0m[37m                             [0m                                 [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m[37m       [0m                                 [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · modsecurity · caddy[0m[37m        [0m                                 [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246mthe judge FLIPPED VALIDATED -> DISPROVED: pre-fix a length-matched boolean payload toggled the[0m  [92m│[0m
+[92m│[0m  [38;5;246mresp…[0m                                                                                           [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m

@@ -1,0 +1,63 @@
+[38;2;232;75;255m─────────────────────────────── [0m[1;38;2;232;75;255mPRIVILEGE ESCALATION · LOGIN MATRIX[0m[38;2;232;75;255m ────────────────────────────────[0m
+[95m╭─[0m[95m─────────────────────────────[0m[95m [0m[95m▐ PRIVILEGE-ESCALATION MATRIX ORACLE[0m[95m [0m[95m─────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m      source[0m[38;5;246m  [0m[96m/mnt/d/scanner proj/sentinel/assets/shot_policy.json[0m                              [95m│[0m
+[95m│[0m  [38;5;246mlogin matrix[0m[38;5;246m  [0m[95m2[0m[37m account(s) · [0m[95m3[0m[37m declared boundary(ies)             [0m                              [95m│[0m
+[95m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37malice[0m[38;5;246m [0m[38;5;246mMUST NOT reach bob's object ·[0m[38;5;246m [0m[38;5;246mhorizontal · GET /api/users/bob/profile[0m[38;5;246m [0m           [95m│[0m
+[95m│[0m  [91mCRITICAL[0m[38;5;246m [0m[37malice[0m[38;5;246m [0m[38;5;246mMUST NOT reach elevated function ·[0m[38;5;246m [0m[38;5;246mvertical · GET /api/admin/dashboard[0m           [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37malice[0m[38;5;246m [0m[38;5;246mMUST NOT reach bob's object ·[0m[38;5;246m [0m[38;5;246mhorizontal · GET /api/users/bob/orders[0m[38;5;246m  [0m           [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246mGround truth only. Each boundary is proven by a THREE-PROBE differential on the live target: [0m   [95m│[0m
+[95m│[0m  [38;5;246mthe attacker's control probe (its OWN object) MUST succeed, the breach probe MUST be granted, [0m  [95m│[0m
+[95m│[0m  [38;5;246mAND an anonymous caller MUST be denied that same route before an escalation is CONFIRMED. The [0m  [95m│[0m
+[95m│[0m  [38;5;246mcontrol rules out a dead session; the anonymous baseline rules out a public route. A bare [0m      [95m│[0m
+[95m│[0m  [38;5;246mstatus code is never the verdict.[0m                                                               [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[95m╭─[0m[95m─────────────────────────[0m[95m [0m[95m▐ PRIVILEGE ESCALATION · DETERMINISTIC JUDGE[0m[95m [0m[95m─────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [95m┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[0m  [95m│[0m
+[95m│[0m  [95m┃[0m[1;95m [0m[1;95mverdict         [0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mseverity[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mcontrol[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mbreach[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95manon[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mclaim                             [0m[1;95m [0m[95m┃[0m  [95m│[0m
+[95m│[0m  [95m┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩[0m  [95m│[0m
+[95m│[0m  [95m│[0m [92m○ boundary holds[0m [95m│[0m [38;5;246mHIGH[0m     [95m│[0m     [37m200[0m [95m│[0m    [37m403[0m [95m│[0m  [38;5;246m401[0m [95m│[0m with a live session (control 200), [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m                  [95m│[0m          [95m│[0m         [95m│[0m        [95m│[0m      [95m│[0m the brea…                          [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m        [95m│[0m [38;5;246mHIGH[0m     [95m│[0m     [37m200[0m [95m│[0m    [37m200[0m [95m│[0m  [38;5;246m401[0m [95m│[0m with a live session (control 200), [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m                  [95m│[0m          [95m│[0m         [95m│[0m        [95m│[0m      [95m│[0m attacker…                          [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m        [95m│[0m [38;5;246mCRITICAL[0m [95m│[0m     [37m200[0m [95m│[0m    [37m200[0m [95m│[0m  [38;5;246m401[0m [95m│[0m with a live session (control 200), [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m                  [95m│[0m          [95m│[0m         [95m│[0m        [95m│[0m      [95m│[0m attacker…                          [95m│[0m  [95m│[0m
+[95m│[0m  [95m└──────────────────┴──────────┴─────────┴────────┴──────┴────────────────────────────────────┘[0m  [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m2 privilege boundary(ies) provably crossed by a live session (control succeeded + breach [0m       [95m│[0m
+[95m│[0m  [38;5;246mgranted + anonymous caller denied) and CONFIRMED; a held boundary, a dead control session, or [0m  [95m│[0m
+[95m│[0m  [38;5;246ma route open to anonymous callers yields no finding.[0m                                            [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ PRIVESC REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m    verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                                             [0m          [92m│[0m
+[92m│[0m  [38;5;246m   strategy[0m[38;5;246m  [0m[37mprivilege_escalation_enforcement                                         [0m          [92m│[0m
+[92m│[0m  [38;5;246m    control[0m[38;5;246m  [0m[1;91mDENY[0m[37m [0m[37malice[0m[37m [0m[38;5;246m(horizontal)[0m[37m [0m[38;5;246m→[0m[37m [0m[37mGET /api/users/bob/profile[0m[37m                     [0m          [92m│[0m
+[92m│[0m  [38;5;246mkeeps alive[0m[38;5;246m  [0m[38;5;246mattacker's own control · GET http://127.0.0.1:39217/api/users/alice/prof…[0m          [92m│[0m
+[92m│[0m  [38;5;246m   upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:39217[0m[37m                                                   [0m          [92m│[0m
+[92m│[0m  [38;5;246m live prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m403[0m[37m [0m[1;92mDISPROVED[0m[37m                             [0m          [92m│[0m
+[92m│[0m  [38;5;246m  artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m                                    [0m          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246mthe judge FLIPPED VALIDATED → DISPROVED: pre-fix the escalation reproduced live, and under [0m     [92m│[0m
+[92m│[0m  [38;5;246menforcem…[0m                                                                                       [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ PRIVESC REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m    verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                                             [0m          [92m│[0m
+[92m│[0m  [38;5;246m   strategy[0m[38;5;246m  [0m[37mprivilege_escalation_enforcement                                         [0m          [92m│[0m
+[92m│[0m  [38;5;246m    control[0m[38;5;246m  [0m[1;91mDENY[0m[37m [0m[37malice[0m[37m [0m[38;5;246m(vertical)[0m[37m [0m[38;5;246m→[0m[37m [0m[37mGET /api/admin/dashboard[0m[37m                         [0m          [92m│[0m
+[92m│[0m  [38;5;246mkeeps alive[0m[38;5;246m  [0m[38;5;246mattacker's own control · GET http://127.0.0.1:39217/api/users/alice/prof…[0m          [92m│[0m
+[92m│[0m  [38;5;246m   upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:39217[0m[37m                                                   [0m          [92m│[0m
+[92m│[0m  [38;5;246m live prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m403[0m[37m [0m[1;92mDISPROVED[0m[37m                             [0m          [92m│[0m
+[92m│[0m  [38;5;246m  artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m                                    [0m          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246mthe judge FLIPPED VALIDATED → DISPROVED: pre-fix the escalation reproduced live, and under [0m     [92m│[0m
+[92m│[0m  [38;5;246menforcem…[0m                                                                                       [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m

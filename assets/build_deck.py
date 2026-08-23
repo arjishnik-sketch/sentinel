@@ -152,7 +152,7 @@ SLIDES += [
             "Local-first AI agent that reasons about live web targets",
             "A status code is never a verdict — a deterministic judge decides",
             "Proven end-to-end on two independent live stacks",
-            "Three vulnerability classes, each closing the full loop",
+            "Five vulnerability classes, each closing the full loop",
             "Every decision explainable, auditable, and scope-guarded",
         ],
         "notes": (
@@ -276,7 +276,7 @@ SLIDES += [
         "bullets": [
             "Security graph: hosts, resources, principals, evidence, findings",
             "Pre-connection scope guard refuses out-of-scope probes",
-            "Pure judges per class: authorization, header posture, cookies",
+            "A pure judge per class: authz, posture, cookies, privesc, injection",
             "RemediationEnforcer: an ephemeral loopback reverse-proxy shield",
             "Local model via Ollama (qwen3:4b) — no cloud, no data egress",
         ],
@@ -356,9 +356,9 @@ SLIDES += [
     },
 ]
 SLIDES += [
-    {"kind": "divider", "title": "Three Vulnerability Classes",
+    {"kind": "divider", "title": "Five Vulnerability Classes",
      "subtitle": "Each closes the full find → patch → prove loop, live",
-     "notes": "Sentinel is not a one-trick demo. Three independent classes each run the entire "
+     "notes": "Sentinel is not a one-trick demo. Five independent classes each run the entire "
               "loop end-to-end against live targets."},
     {
         "title": "Class 1 — Broken Access Control",
@@ -408,6 +408,45 @@ SLIDES += [
             "The newest class and a chaining enabler. Cookie oracles are grounded in the Set-"
             "Cookie the target actually sets, so a weak session cookie is confirmed honestly, "
             "then hardened on the shield and re-proven."
+        ),
+    },
+    {
+        "title": "Class 4 — Privilege Escalation",
+        "subtitle": "privilege_escalation — horizontal (BOLA) & vertical",
+        "image": "shot_privesc.png", "layout": "right",
+        "bullets": [
+            ("cyan", "Three-probe differential: control · breach · anon baseline"),
+            ("cyan", "CONFIRMED only if control succeeds AND breach granted"),
+            ("cyan", "AND the anonymous baseline is denied — no false positives"),
+            ("cyan", "A properly owned /orders endpoint → DISPROVED, no finding"),
+            ("ok", "Shield denies the cross-boundary request → re-proven"),
+        ],
+        "notes": (
+            "Privilege escalation as a rigorous differential. Sentinel replays the attacker's "
+            "session against their own object (control) and a forbidden one (breach), plus an "
+            "anonymous baseline; it confirms only when the control succeeds, the breach is "
+            "granted, and anonymous is denied. An ownership-checked endpoint yields no finding — "
+            "the honest control — then the shield denies the escalation and the judge re-proves."
+        ),
+    },
+    {
+        "title": "Class 5 — SQL Injection",
+        "subtitle": "injection — a boolean differential, not a signature",
+        "image": "shot_injection.png", "layout": "right",
+        "bullets": [
+            ("cyan", "Benign baseline + length-matched TRUE/FALSE payload pairs"),
+            ("cyan", "CONFIRMED only when TRUE ≠ FALSE, anchored to the baseline"),
+            ("cyan", "Real SQL toggles the boolean — nothing pattern-matches '1=1'"),
+            ("cyan", "A bound/parameterised filter collapses → DISPROVED, no finding"),
+            ("ok", "Request-guard shield blocks the payload → re-proven"),
+        ],
+        "notes": (
+            "Injection judged by behaviour, not by regex. Sentinel sends a benign baseline plus "
+            "length-matched boolean pairs and confirms only when the TRUE and FALSE arms diverge "
+            "while the baseline stays anchored — so the differential emerges from the database "
+            "actually evaluating the injected boolean. A parameterised filter collapses the "
+            "differential to no finding; the request-guard virtual patch then blocks the payload "
+            "and the judge re-proves."
         ),
     },
 ]
@@ -467,10 +506,10 @@ SLIDES += [
     {
         "title": "Test Results & Validation",
         "subtitle": "Green, deterministic, and honest about the one skip",
-        "stats": [("67", "tests"), ("66", "passing"), ("3", "vuln classes"),
+        "stats": [("123", "tests"), ("122", "passing"), ("5", "vuln classes"),
                   ("2", "live stacks")],
         "bullets": [
-            ("ok", "66 passing, 1 skipped (the opt-in live-browser path)"),
+            ("ok", "122 passing, 1 skipped (the opt-in live-browser path)"),
             ("ok", "Full offline suite is network-free and runs in seconds"),
             ("ok", "Each class: parse → CONFIRM → PATCH → PROVE, plus isolation"),
             ("ok", "Live E2E validated on Juice Shop and VAmPI over real sockets"),
@@ -556,14 +595,14 @@ SLIDES += [
         "title": "Status & Roadmap",
         "subtitle": "Honest today; a clear path to more",
         "bullets": [
-            ("ok", "Today: 3 classes live end-to-end on 2 stacks; 67 tests"),
+            ("ok", "Today: 5 classes live end-to-end on 2 stacks; 122 tests"),
             ("ok", "Today: Login Tester + authenticated reasoning + chaining ingredients"),
             ("next", "Next: full causal chaining (compose proven ingredients)"),
-            ("next", "Next: more OWASP classes (injection, SSRF, IDOR variants)"),
+            ("next", "Next: more OWASP classes (SSRF, XSS, mass assignment)"),
             ("next", "Next: CI/CD gate + policy library for common stacks"),
         ],
         "notes": (
-            "We're candid about the line between done and next. Three classes, two targets, the "
+            "We're candid about the line between done and next. Five classes, two targets, the "
             "Login Tester, and chaining ingredients ship today; full causal chaining, more "
             "classes, and a CI gate are the roadmap."
         ),
@@ -573,7 +612,7 @@ SLIDES += [
     {
         "title": "The Ask",
         "subtitle": "$1M to turn a proven engine into a platform",
-        "stats": [("$1M", "seed"), ("18", "months runway"), ("3→8", "vuln classes")],
+        "stats": [("$1M", "seed"), ("18", "months runway"), ("5→8", "vuln classes")],
         "bullets": [
             ("cyan", "Engineering: full chaining + the next OWASP classes"),
             ("cyan", "Policy library: ready-made oracles for common stacks"),

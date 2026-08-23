@@ -17,8 +17,10 @@ controls) or contradict (CONFIRMED findings).
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 _INDEX_HTML = b"""<!doctype html><html><head><title>Demo Shop</title></head>
 <body><h1>Demo Shop</h1>
@@ -42,6 +44,73 @@ _PRODUCTS = json.dumps({"status": "success", "data": [
 ]}).encode()
 
 _VERSION = json.dumps({"version": "14.5.1"}).encode()
+
+
+# --- A genuinely SQL-injectable backend --------------------------------------
+# NOT a mock: a real in-memory SQLite DB. The search endpoint below concatenates
+# the `q` parameter straight into a grouped `WHERE ((name LIKE …) OR (…))` query
+# (interpolated TWICE, exactly like the documented Juice-Shop shape), so the
+# engine's boolean payloads genuinely toggle real SQL. Nothing pattern-matches
+# "1=1" — the differential emerges from SQLite actually evaluating the injected
+# boolean, and malformed paren depths raise a real error (500) that the judge
+# honestly collapses rather than counting. The `/api/Products?name=` endpoint
+# uses a BOUND parameter (no concatenation), so it is the compliant control that
+# DISPROVES. Both are driven by the same rows, so the contrast is real.
+_DB = sqlite3.connect(":memory:", check_same_thread=False)
+_DB_LOCK = threading.Lock()
+_DB.execute(
+    "CREATE TABLE products (id INTEGER, name TEXT, description TEXT, deletedAt TEXT)"
+)
+_DB.executemany(
+    "INSERT INTO products VALUES (?, ?, ?, ?)",
+    [
+        (1, "Apple Juice", "Freshly pressed apple juice", None),
+        (2, "Banana Juice", "Creamy banana juice", None),
+        (3, "Carrot Juice", "Organic carrot juice", None),
+        (4, "Lemon Juice", "Sour lemon juice", None),
+        (5, "Melon Juice", "Sweet melon juice", None),
+    ],
+)
+_DB.commit()
+
+
+def _search_products_injectable(q: str) -> list[tuple]:
+    # VULNERABLE ON PURPOSE: q is string-interpolated twice into a grouped WHERE.
+    sql = (
+        "SELECT id, name FROM products WHERE "
+        "((name LIKE '%" + q + "%' OR description LIKE '%" + q + "%') "
+        "AND deletedAt IS NULL) ORDER BY id"
+    )
+    with _DB_LOCK:
+        return _DB.execute(sql).fetchall()
+
+
+def _filter_products_bound(name: str) -> list[tuple]:
+    # SAFE: a bound parameter — the compliant control that collapses to DISPROVED.
+    with _DB_LOCK:
+        return _DB.execute(
+            "SELECT id, name FROM products WHERE name = ? ORDER BY id", (name,)
+        ).fetchall()
+
+
+def _rows_to_body(rows: list[tuple]) -> bytes:
+    return json.dumps(
+        {"status": "success", "data": [{"id": r[0], "name": r[1]} for r in rows]}
+    ).encode()
+
+
+def _bearer_user(headers) -> str | None:
+    """The user a `Bearer <user>-token` names, or None when unauthenticated.
+
+    The demo target's broken authorization model: presenting ANY bearer token
+    lets you reach ANY user's profile and the admin dashboard (no ownership /
+    role check) — the real flaw the privilege-escalation judge reproduces. The
+    `/orders` endpoint DOES check ownership, so it is the compliant control.
+    """
+    raw = headers.get("Authorization", "")
+    if raw.startswith("Bearer ") and raw[7:].endswith("-token"):
+        return raw[7:][: -len("-token")]
+    return None
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -74,7 +143,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        query = parse_qs(parsed.query)
+        segments = [s for s in path.split("/") if s]
         if path == "/":
             # A weak session cookie: no HttpOnly, no Secure, no SameSite.
             self._emit(200, _INDEX_HTML,
@@ -86,7 +158,44 @@ class _Handler(BaseHTTPRequestHandler):
             # Correctly denied — the honest DISPROVED control (no finding).
             self._emit(401, json.dumps({"error": "unauthorized"}).encode())
         elif path == "/api/Products":
-            self._emit(200, _PRODUCTS)
+            # INJECTION COMPLIANT CONTROL: a BOUND `name` filter — no
+            # concatenation, so every boolean pair collapses → DISPROVED.
+            name = (query.get("name") or [""])[0]
+            self._emit(200, _rows_to_body(_filter_products_bound(name)))
+        elif path == "/rest/products/search":
+            # INJECTION FINDING: `q` is concatenated into the SQL (see helper).
+            # Real SQLite evaluates the injected boolean; malformed depths 500.
+            q = (query.get("q") or [""])[0]
+            try:
+                rows = _search_products_injectable(q)
+            except sqlite3.Error:
+                self._emit(500, json.dumps({"error": "query failed"}).encode())
+            else:
+                self._emit(200, _rows_to_body(rows))
+        elif len(segments) == 4 and segments[0] == "api" and \
+                segments[1] == "users" and segments[3] == "profile":
+            # PRIVESC (horizontal): NO ownership check — any bearer token reaches
+            # any user's profile → CONFIRMED. Anonymous is denied (401).
+            self._emit(200 if _bearer_user(self.headers) else 401,
+                       json.dumps({"user": segments[2],
+                                   "email": f"{segments[2]}@demo.shop"}).encode())
+        elif len(segments) == 4 and segments[0] == "api" and \
+                segments[1] == "users" and segments[3] == "orders":
+            # PRIVESC COMPLIANT CONTROL: this endpoint DOES check ownership, so a
+            # cross-tenant breach is denied (403) → DISPROVED, no finding.
+            who = _bearer_user(self.headers)
+            if who is None:
+                self._emit(401, json.dumps({"error": "unauthorized"}).encode())
+            elif who == segments[2]:
+                self._emit(200, json.dumps({"user": segments[2],
+                                            "orders": [{"id": 1001}]}).encode())
+            else:
+                self._emit(403, json.dumps({"error": "forbidden"}).encode())
+        elif path == "/api/admin/dashboard":
+            # PRIVESC (vertical): NO role check — any bearer token reaches the
+            # admin function → CONFIRMED. Anonymous is denied (401).
+            self._emit(200 if _bearer_user(self.headers) else 401,
+                       json.dumps({"dashboard": "admin", "users": 5}).encode())
         elif path == "/api/BasketItems":
             self._emit(401, json.dumps({"error": "unauthorized"}).encode())
         elif path == "/rest/admin/application-version":
