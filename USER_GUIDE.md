@@ -8,6 +8,8 @@
 
 Sentinel points itself at a live HTTP target, recons the attack surface, forms conservative authorization hypotheses, and runs an adaptive research loop that ranks and probes them — showing every decision on an auditable "decision board." It is a local-first cyber-reasoning agent built for the AI Kavach challenge.
 
+It closes the full find → reason → prove → patch → prove loop live across **three vulnerability classes** — broken access control (`authorization_policy_violation`), security-header posture (`security_misconfiguration`), and insecure cookies (`insecure_cookie`) — each adjudicated by its own **pure deterministic judge**. An opt-in **Login Tester** captures a real authenticated browser session (MFA-aware) so the same prove-chain can reason as the logged-in user. Every verdict traces to a judge reproducing a contradiction against an operator-declared oracle — never to a status code, never to the advisory LLM.
+
 ---
 
 ## TL;DR — quick start
@@ -59,6 +61,7 @@ Watch the decision board carry a live target through the full loop: recon → hy
 - **A live HTTP(S) target** to investigate (e.g. OWASP Juice Shop).
 - **WSL / Linux to run.** On the dev machine, source is edited on the Windows drive (`D:\scanner proj\sentinel`) but the app **runs under WSL/Linux** — the committed `.venv` is Linux-native (POSIX layout, `/usr/bin/python3.12`).
 - Optional (legacy `hunt` pipeline only): the ProjectDiscovery Go binaries `subfinder`, `httpx`, `katana` on `PATH`. **Not needed for the primary `investigate` command.**
+- Optional (**Login Tester** only): the `login` extra — `pip install -e ".[login]"` then `python -m playwright install chromium`. **Not needed for `investigate`;** the core install stays cloud-free and dependency-light.
 
 Runtime Python dependencies are minimal: `rich`, `requests`, `pyyaml`, `python-dotenv` (everything else is stdlib).
 
@@ -187,7 +190,117 @@ investigate
 
 Leave the REPL with `exit` (or `quit`, or Ctrl-C).
 
-> **README caveat:** `README.md` is stale — it says `python3 test.py`, which is **not** the entrypoint. Use `./sentinel`.
+> **Note:** the second argument is the cycle budget (default `10`, clamped `1..100`); the third is an optional access-policy oracle; a fourth optional arg is a source-repo directory for the root-cause patch.
+
+---
+
+## The Login Tester (authenticated reasoning)
+
+Anonymous scanning only sees the anonymous attack surface. The **Login Tester**
+turns Sentinel into an *authenticated* reasoner: it captures a real logged-in
+session — MFA and all — and then runs the exact same prove-chain **as the
+logged-in user**. This is the enabler for the interesting bugs, because a real
+session is what lets Sentinel reason about *authenticated* authorization and about
+the *real* session cookies a target sets after login.
+
+### Install the opt-in extra
+
+Playwright is an **opt-in extra** so the core stays lightweight and cloud-free.
+Install it once:
+
+```bash
+pip install -e ".[login]"
+python -m playwright install chromium
+```
+
+Without the extra the `login` command still exists — it just prints an actionable
+install hint and stops. Nothing about the core `investigate` path changes.
+
+### What happens when you run `login`
+
+```bash
+login http://127.0.0.1:3000
+```
+
+1. **Credentials (safely).** Sentinel prompts for a username and reads the
+   password with `getpass` (no echo). Credentials live in memory for the run
+   only — they are **never written to disk and never logged**, and every probe
+   stays scope-bound to the target host.
+2. **A real browser opens.** Sentinel launches a visible Chromium, navigates to
+   the login page (`login_url` if you gave one, else the target), and
+   best-effort auto-fills the email/username and password fields. If the page
+   uses selectors it can't guess, you simply log in yourself in the open window.
+3. **MFA-aware wait (auto + manual).** Sentinel then waits for login to *finish*.
+   It watches for two honest signals — a **session-like cookie** appearing, or the
+   browser **leaving the login/auth/MFA path** — and, in parallel, lets you press
+   **Enter** in the terminal as a manual "I'm done" fallback. First signal wins.
+   This is how it handles MFA without guessing: you complete the second factor in
+   the real browser, and Sentinel detects the transition.
+4. **Session capture.** It reads `context.cookies()` (each cookie carries its
+   *real* `httpOnly` / `secure` / `sameSite` flags) plus any bearer token in
+   `localStorage`, and builds an in-memory `CapturedSession`.
+5. **Authenticated reasoning.** Sentinel then runs its normal prove-chain over the
+   captured identity (below), and the browser stays open until testing finishes
+   (then closes) — or you close it yourself.
+
+### What it reasons about — and the contract it keeps
+
+The captured session feeds the **existing** prove-chain. It does **not** get a
+special, weaker standard of proof:
+
+- **Authenticated authorization.** If you supply an access-policy oracle, Sentinel
+  merges the captured session's live headers (`Cookie`, optional `Authorization:
+  Bearer …`) into the declared `authenticated` principal — **without rewriting a
+  single operator decision or rule binding**. The operator still declares what the
+  authenticated user *should* and *should not* reach; the Login Tester only
+  supplies the real identity so the deterministic judge can test those rules as the
+  logged-in user. No oracle ⇒ authenticated authz has nothing to prove and is
+  honestly skipped.
+- **Insecure cookies, grounded in observation.** Sentinel reconstructs the
+  `Set-Cookie` line for each captured cookie **from the flags the browser actually
+  observed** — it invents nothing. Those go through the *same* pure cookie judge
+  (see below). A session cookie that really shipped without `HttpOnly`/`Secure`
+  becomes a CONFIRMED `insecure_cookie` finding; a properly hardened one returns
+  `DISPROVED` and no finding. The corrective fix is applied with the real
+  `apply_cookie_mutations` primitive and re-judged — a genuine
+  `VALIDATED → DISPROVED` flip.
+
+### Chaining — honest today
+
+When a run yields both a CONFIRMED `insecure_cookie` on the session and endpoints
+reachable as that authenticated principal, Sentinel surfaces them together under
+one **session context** as the *ingredients* of a chain (session captured →
+weak session cookie → authenticated reach). It **does not** auto-compose a causal
+attack narrative from them — full cross-class chaining stays the clearly labeled
+frontier. Sentinel never manufactures a chain edge it did not prove.
+
+---
+
+## Insecure cookies (third vulnerability class)
+
+`insecure_cookie` closes the same find → reason → prove → patch → prove loop as
+broken access control and header posture, on the *same* seams — a session cookie
+missing `HttpOnly`/`Secure` or carrying a dangerous `SameSite=None` is the classic
+pivot for session theft and CSRF, and a prime chaining ingredient.
+
+- **Oracle.** A `cookie_rules` array (in the access-policy file, or via
+  `$SENTINEL_COOKIE_POLICY`) declares, per route, the expectations each
+  `Set-Cookie` must satisfy: `must_have_flag` / `must_not_have_flag`
+  (`HttpOnly` | `Secure`), and `samesite_must_equal` / `samesite_must_not_equal`.
+  An empty `cookie_name` means "every `Set-Cookie` on this route."
+- **Pure judge.** `judge_cookie_posture` re-parses the *observed* `Set-Cookie`
+  headers on a fresh probe and decides each expectation deterministically. Absence
+  of a `SameSite=None` is honestly **not** a violation of "must not equal None" —
+  the judge only flags what the response actually carries.
+- **PATCH + PROVE.** The loopback shield rewrites the forwarded `Set-Cookie`
+  (`add_flag` / `remove_flag` / `set_samesite`); `FIX_PROVEN` is earned only when
+  the same pure judge flips `VALIDATED → DISPROVED` through real enforcement.
+- **Grounding.** Cookie expectations are only ever asserted against cookies a
+  target actually set. The bundled sample oracles for Juice Shop and VAmPI
+  **omit** `cookie_rules` on purpose: neither sets an anonymous/pre-login cookie,
+  so manufacturing one would violate the contract. The class is exercised live via
+  the **Login Tester** (real post-login `context.cookies()`) and by the offline
+  test suite — honest, never guessed.
 
 ---
 
@@ -259,7 +372,8 @@ All commands are entered at the `Sentinel > ` prompt. The command word is split 
 
 | Command | Syntax | What it does |
 |---|---|---|
-| **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs to confirm findings; an existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage. Empty arg prints usage. |
+| **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs to confirm findings; the same file may carry a `header_rules` section (posture) and a `cookie_rules` section (insecure cookies), or those may be supplied via `$SENTINEL_HEADER_POLICY` / `$SENTINEL_COOKIE_POLICY`. An existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage. Empty arg prints usage. |
+| **login** | `login <target> [login_url] [cycles] [access_policy.json]` | **Authenticated reasoning (opt-in).** Drives a real browser, prompts for credentials (`getpass`), waits for you to finish login/MFA, auto-detects completion, captures the session, then runs authenticated authorization probes **and** insecure-cookie analysis on the *real* captured session cookies — followed by PATCH + PROVE for anything CONFIRMED. Requires the opt-in extra (`pip install -e ".[login]"` + `python -m playwright install chromium`); without it the command prints an actionable install hint. Credentials are held in memory for the run only — never persisted, never logged. See **The Login Tester** below. |
 | hunt | `hunt <target>` | Legacy recon+RAG pipeline. **Currently broken** (raises `NameError` in `core.py`); superseded by `investigate`. |
 | findings | `findings` | Prints the in-memory findings of the session's `SentinelCore`. Empty unless a prior `hunt` populated it — `investigate` uses a separate graph and does not fill it. |
 | search | `search <keyword>` | Full-text search of the local knowledge DB (table of ID / Title / Automation). |
@@ -338,6 +452,37 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 - The same operator file may carry a `header_rules` section (or `$SENTINEL_HEADER_POLICY`) declaring, per route, the browser-level protections an endpoint MUST ship (`must_present` / `must_absent` / `must_equal` / `must_not_equal`). These seed `security_misconfiguration` hypotheses that a **separate pure judge** (`judge_header_posture`) decides by freshly re-probing the live response headers — a compliant header returns `DISPROVED` and **no finding**.
 - PATCH + PROVE reuses the *same* loopback shield, now rewriting the forwarded response headers (`set` / `remove` / `remove_if_equals`). `FIX_PROVEN` is earned only when that same pure judge flips `VALIDATED → DISPROVED` under real enforcement. The shield never stamps its own identity onto the response, so even a "strip the `Server` header" fix proves out honestly.
 
+**A third vulnerability class — insecure cookies — closes the same loop:**
+
+- A `cookie_rules` section (or `$SENTINEL_COOKIE_POLICY`) declares, per route, the
+  hardening each `Set-Cookie` MUST satisfy (`must_have_flag` / `must_not_have_flag`
+  for `HttpOnly`/`Secure`; `samesite_must_equal` / `samesite_must_not_equal`).
+  These seed `insecure_cookie` hypotheses that a **third pure judge**
+  (`judge_cookie_posture`) decides by re-parsing the observed `Set-Cookie` headers;
+  a hardened cookie returns `DISPROVED` and no finding.
+- PATCH + PROVE reuses the *same* loopback shield, now rewriting the forwarded
+  `Set-Cookie` (`add_flag` / `remove_flag` / `set_samesite`). `FIX_PROVEN` is
+  earned only on a `VALIDATED → DISPROVED` flip under real enforcement. Cookie
+  expectations are grounded in observed `Set-Cookie` behaviour, never guessed —
+  see **Insecure cookies** and **The Login Tester** above.
+
+**Authenticated reasoning — the Login Tester:**
+
+- An opt-in browser session (Playwright extra) captures a real logged-in identity,
+  MFA and all, and feeds it into the *same* prove-chain: authenticated
+  authorization (live session headers merged into the declared `authenticated`
+  principal, no operator decision rewritten) plus insecure-cookie analysis on the
+  *real* captured session cookies. Credentials are never persisted or logged.
+
+**Validation — a deterministic, network-free test suite:**
+
+- **67** tests cover the pure judges, the seeders, the enforcer's mutation
+  primitives, and full offline FIND→CONFIRM→FIX_PROVEN flows with isolation checks
+  across all three classes (plus a live headless-browser capture gated behind an
+  env var). They run with **no network** — every verdict is reproduced by the pure
+  judge against a canned oracle — so the epistemic contract itself is regression-
+  tested: `66 passed, 1 skipped` by default.
+
 **Target-agnostic — proven on two independent live targets:**
 
 - The engine carries no target-specific knowledge: the oracle is the only ground truth. Proven end-to-end against both **OWASP Juice Shop** (Node) and **VAmPI** (Flask) — different stacks, different routes, same engine. On VAmPI: `GET /users/v1/_debug` (leaks every user + plaintext password) → `CONFIRMED` → `FIX_PROVEN`; an anonymous `DELETE` correctly rejected `401` → `DISPROVED`/no finding; CSP + `X-Content-Type-Options` absent and a leaked `Server: Werkzeug/…` header → 3 `CONFIRMED` posture findings, all `FIX_PROVEN`; a compliant CORS control → `DISPROVED`/no finding.
@@ -352,7 +497,7 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 
 1. Multi-principal / differential authorization reasoning (compare two principals against the same resource).
 2. Wire policy-violation hypotheses from differential signals, not only from the declared oracle.
-3. **Bug-chaining across classes** — compose a proven authorization finding with a proven misconfiguration into a single attack narrative (two independent classes now close the loop live; chaining is the honest remaining frontier and is *not* yet implemented).
-4. Housekeeping: fix the broken legacy `hunt`, implement the `resume`/`report` stubs, and refresh the stale `README.md`.
+3. **Bug-chaining across classes** — auto-compose a proven authorization finding with a proven cookie/misconfiguration finding into a single causal attack narrative. Three independent classes now close the loop live, and the **Login Tester already assembles the *ingredients* of a chain** for one session (session captured → weak session cookie CONFIRMED → endpoints reachable as that authenticated principal), surfaced together under one session context. Auto-composing the causal narrative from those ingredients is the honest remaining frontier and is deliberately *not* manufactured today.
+4. Housekeeping: fix the broken legacy `hunt` and implement the `resume`/`report` stubs. (The stale `README.md` has been refreshed — it now points at `./sentinel` and this guide.)
 
 Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI that closes the full find → prove → patch → prove loop live** — every verdict traceable to the deterministic judge, never to a status code or the LLM.
