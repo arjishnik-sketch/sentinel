@@ -15,6 +15,12 @@ dependencies = [
     "python-dotenv"
 ]
 
+[project.optional-dependencies]
+# Opt-in Login Tester. The core stays lightweight and cloud-free; install
+# with `pip install -e ".[login]"` then `python -m playwright install chromium`
+# to drive a real browser, wait for MFA, and capture an authenticated session.
+login = ["playwright>=1.40"]
+
 [project.scripts]
 sentinel = "app.cli:main"
 
