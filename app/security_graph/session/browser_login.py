@@ -37,6 +37,10 @@ from urllib.parse import urlsplit
 # Cookie names operators overwhelmingly use for a session/auth credential. Used
 # ONLY as an auto-detect hint and to scope the advisory hardening baseline — it
 # never asserts a finding. The pure judge still decides against observed flags.
+#
+# Deliberately EXCLUDES app-state cookies that are set BEFORE authentication
+# (e.g. Juice Shop's `continueCode`, `language`) — treating those as a session
+# signal would end the capture loop before login actually completes.
 SESSION_COOKIE_NAMES = frozenset(
     {
         "token",
@@ -53,11 +57,7 @@ SESSION_COOKIE_NAMES = frozenset(
         "auth_token",
         "access_token",
         "jwt",
-        "csrftoken",
-        "csrf_token",
-        "xsrf-token",
         "remember_token",
-        "continuecode",
     }
 )
 
@@ -179,6 +179,29 @@ _INSTALL_HINT = (
     "    python -m playwright install chromium\n"
     "then re-run `login`. (The core scanner never requires this.)"
 )
+
+
+def _dismiss_overlays(page) -> None:
+    """
+    Best-effort dismissal of cookie-consent banners and welcome modals that
+    commonly intercept the first click on a login form (Juice Shop shows both).
+    Every selector is optional and silent on a miss — a no-op elsewhere.
+    """
+    for selector in (
+        "a[aria-label='dismiss cookie message']",
+        ".cc-dismiss",
+        ".cc-btn",
+        "button[aria-label='Close Welcome Banner']",
+        "button[aria-label='Close']",
+        "mat-dialog-container button.close-dialog",
+        ".close-dialog",
+    ):
+        try:
+            loc = page.locator(selector)
+            if loc.count():
+                loc.first.click(timeout=1500)
+        except Exception:
+            continue
 
 
 def _autofill_login(page, username: str, password: str) -> None:
@@ -309,6 +332,7 @@ def capture_session(
         try:
             _say(f"opening {entry}")
             page.goto(entry, wait_until="domcontentloaded", timeout=30000)
+            _dismiss_overlays(page)
             _say("auto-filling credentials (finish login + MFA in the window)")
             _autofill_login(page, username, password)
 
@@ -319,9 +343,15 @@ def capture_session(
                 try:
                     names = [c.get("name", "") for c in context.cookies()]
                     current = page.url
+                    bearer_now = _extract_bearer(page)
                 except Exception:
-                    names, current = [], ""
-                if is_authenticated_signal(names, current, login_url=login_url):
+                    names, current, bearer_now = [], "", None
+                # A localStorage JWT is the authoritative signal for SPAs that
+                # authenticate without a session cookie (e.g. Juice Shop, which
+                # is hash-routed so the URL never leaves "/").
+                if bearer_now or is_authenticated_signal(
+                    names, current, login_url=login_url
+                ):
                     _say("authenticated session detected")
                     break
                 if time.monotonic() >= deadline:
