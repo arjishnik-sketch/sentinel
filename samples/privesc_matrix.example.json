@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "GENERIC, DEPLOYMENT-ORIENTED privilege-escalation (login-matrix) template. EXTERNAL GROUND TRUTH an operator supplies for THEIR OWN target — the Sentinel engine holds zero knowledge of any host, route, or account. Point Sentinel at any stack and only this data changes. TWO ways to supply the identities: (1) hardcode each principal's real session `headers` here (a bearer token and/or session cookie you are authorised to use), then load standalone via `SENTINEL_PRIVESC_POLICY=samples/privesc_matrix.example.json ./sentinel investigate <target>` or paste this `privesc_matrix` section into your combined access-policy file; or (2) leave `headers` empty and let the opt-in Login Tester bind live browser sessions to these principals BY INDEX at runtime (`login`) — identities then come from real logins, never from disk. Each check poses a boundary question the deterministic judge answers with a THREE-PROBE differential on the live target: a CONTROL probe (attacker reaches its OWN object, MUST succeed -> proves the session is alive), a BREACH probe (attacker reaches the forbidden object/function), and an anonymous BASELINE probe (same breach with NO session). Escalation is CONFIRMED only when control succeeds AND breach is granted AND the anonymous baseline is denied — so a public route or an app that 200s everything can never be mistaken for a finding, and a bare status code is never the verdict. Replace every placeholder below with your target's real accounts and routes.",
+  "privesc_matrix": {
+    "success_statuses": [200, 201, 204],
+    "principals": [
+      {
+        "name": "alice",
+        "role": "user",
+        "headers": {
+          "Authorization": "Bearer REPLACE-WITH-ALICE-TOKEN",
+          "Cookie": "session=REPLACE-WITH-ALICE-SESSION"
+        },
+        "control": { "method": "GET", "path": "/api/users/alice/profile" }
+      },
+      {
+        "name": "bob",
+        "role": "user",
+        "headers": {
+          "Authorization": "Bearer REPLACE-WITH-BOB-TOKEN"
+        },
+        "control": { "method": "GET", "path": "/api/users/bob/profile" }
+      },
+      {
+        "name": "admin",
+        "role": "admin",
+        "headers": {
+          "Authorization": "Bearer REPLACE-WITH-ADMIN-TOKEN"
+        },
+        "control": { "method": "GET", "path": "/api/admin/dashboard" }
+      }
+    ],
+    "checks": [
+      {
+        "type": "horizontal",
+        "attacker": "alice",
+        "victim": "bob",
+        "breach": { "method": "GET", "path": "/api/users/bob/profile" },
+        "severity": "HIGH",
+        "rationale": "HORIZONTAL (IDOR / BOLA). alice legitimately reaches her OWN profile (her control) but MUST NOT read bob's object. CONFIRMED only if alice's control succeeds (session alive), alice's breach of bob's object is granted, AND the same request with no session is denied (rules out a public route). The durable fix is an object-level ownership check in the handler; the shield proves it by denying alice's cross-tenant request."
+      },
+      {
+        "type": "vertical",
+        "attacker": "alice",
+        "breach": { "method": "GET", "path": "/api/admin/dashboard" },
+        "severity": "CRITICAL",
+        "rationale": "VERTICAL escalation. alice is a plain user and MUST NOT reach an admin-only function. The admin principal above is declared so the same route is known to be legitimately reachable by SOMEONE (a sanity anchor for the operator); the judge only ever replays alice's session for the breach. CONFIRMED only if alice's control succeeds, alice reaches the admin function, AND the anonymous baseline is denied."
+      }
+    ]
+  }
+}

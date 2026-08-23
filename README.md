@@ -21,9 +21,18 @@ Shop and VAmPI).
 
 ## Vulnerability classes (all close the full loop live)
 
+Each class is driven only by operator-declared **data** — the engine holds zero
+target-specific knowledge. Deployment-ready templates ship in [`samples/`](samples).
+
 - **Broken access control** — `authorization_policy_violation`
 - **Security-header posture** — `security_misconfiguration`
 - **Insecure cookies** — `insecure_cookie` (missing `HttpOnly` / `Secure`, weak `SameSite`)
+- **Privilege escalation** — `privilege_escalation` (horizontal IDOR/BOLA + vertical, three-probe differential)
+- **SQL injection** — `injection` (boolean-blind, three-way length-matched differential + request-guard virtual patch)
+
+Every finding is adjudicated by its own **pure deterministic judge** and, once
+CONFIRMED, is patched-and-proven through the *same* judge under live enforcement —
+after a human-in-the-loop approval gate (`$SENTINEL_ASSUME_YES=1` for CI).
 
 ## Quick start
 

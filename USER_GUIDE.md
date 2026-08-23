@@ -8,7 +8,9 @@
 
 Sentinel points itself at a live HTTP target, recons the attack surface, forms conservative authorization hypotheses, and runs an adaptive research loop that ranks and probes them — showing every decision on an auditable "decision board." It is a local-first cyber-reasoning agent built for the AI Kavach challenge.
 
-It closes the full find → reason → prove → patch → prove loop live across **three vulnerability classes** — broken access control (`authorization_policy_violation`), security-header posture (`security_misconfiguration`), and insecure cookies (`insecure_cookie`) — each adjudicated by its own **pure deterministic judge**. An opt-in **Login Tester** captures a real authenticated browser session (MFA-aware) so the same prove-chain can reason as the logged-in user. Every verdict traces to a judge reproducing a contradiction against an operator-declared oracle — never to a status code, never to the advisory LLM.
+It closes the full find → reason → prove → patch → prove loop live across **five vulnerability classes** — broken access control (`authorization_policy_violation`), security-header posture (`security_misconfiguration`), insecure cookies (`insecure_cookie`), privilege escalation (`privilege_escalation`), and SQL injection (`injection`) — each adjudicated by its own **pure deterministic judge**. An opt-in **Login Tester** captures a real authenticated browser session (MFA-aware) so the same prove-chain can reason as the logged-in user. Every verdict traces to a judge reproducing a contradiction against an operator-declared oracle — never to a status code, never to the advisory LLM.
+
+The engine holds **zero** target-specific knowledge: every class is driven only by operator-declared **data** (a policy oracle, a header/cookie baseline, a login matrix, an injection matrix) or a live-captured session. Point Sentinel at any stack and only that data changes — Juice Shop is the test fixture, not the product. Deployment-oriented, fill-in-the-blanks templates ship in `samples/` for every class.
 
 ---
 
@@ -304,6 +306,86 @@ pivot for session theft and CSRF, and a prime chaining ingredient.
 
 ---
 
+## Privilege escalation (fourth vulnerability class)
+
+`privilege_escalation` finds the two escalation shapes that a role/ownership
+model must forbid — **horizontal** (a user reaching another user's object:
+IDOR / BOLA) and **vertical** (a plain user reaching an admin-only function) —
+and closes the same find → reason → prove → patch → prove loop. It is the class
+that most needs *real identities*, so it is driven either by tokens you declare
+or by live sessions the Login Tester binds.
+
+- **Oracle — a login matrix.** A `privesc_matrix` section (in the access-policy
+  file, or a standalone file via `$SENTINEL_PRIVESC_POLICY`) declares
+  `principals` — each with a `name`, `role`, real session `headers` (a bearer
+  token and/or `Cookie` you are authorised to use), and a `control` request that
+  reaches its **own** object — and `checks`, each a `horizontal` (with a
+  `victim`) or `vertical` boundary the attacker principal MUST NOT cross, naming
+  the forbidden `breach` request. The generic template is
+  [`samples/privesc_matrix.example.json`](samples/privesc_matrix.example.json).
+- **Pure judge — a three-probe differential.** For each check the deterministic
+  judge fires *three* live probes: a **CONTROL** probe (attacker → its own
+  object, which MUST succeed — proving the session is actually alive), a
+  **BREACH** probe (attacker → the forbidden object/function), and an anonymous
+  **BASELINE** probe (the same breach with **no** session). Escalation is
+  `VALIDATED` **only** when control succeeds **and** breach is granted **and**
+  the anonymous baseline is denied. That third probe is what stops a public
+  route — or an app that `200`s everything — from ever being mistaken for a
+  finding; a bare status code is never the verdict.
+- **Identities from live logins.** Leave `headers` empty and the opt-in Login
+  Tester binds real browser sessions to the declared principals **by index** at
+  runtime — the identities then come from genuine logins, never from disk.
+- **PATCH + PROVE.** The same loopback shield denies the attacker's cross-tenant
+  / cross-role request; `FIX_PROVEN` is earned only when the same pure judge
+  makes the full `VALIDATED → DISPROVED` flip under live enforcement (and each
+  side re-fires its own anonymous baseline probe, so a shield can never take
+  credit for a boundary that never reproduced pre-fix).
+
+---
+
+## SQL injection (fifth vulnerability class)
+
+`injection` proves boolean-blind SQL injection with a **three-way boolean
+differential** — never from an error string, a status code, or a reflected
+payload. It closes the same find → reason → prove → patch → prove loop, with a
+request-guard (WAF-style) virtual patch.
+
+- **Oracle — an injection matrix.** An `injection_matrix` section (in the
+  access-policy file, or a standalone file via `$SENTINEL_INJECTION_POLICY`)
+  declares `checks`, each naming ONE request parameter (`param`) at a `location`
+  (`query` / `body_form` / `body_json`) on a `method` + `path`, plus a benign
+  `baseline_value` that returns a legitimate response. The declared parameter
+  makes **no** security claim on its own — it only poses a question. The generic
+  template is
+  [`samples/injection_matrix.example.json`](samples/injection_matrix.example.json).
+- **Pure judge — baseline / TRUE / FALSE.** The judge fires the benign baseline,
+  then a ladder of **length-matched** `(TRUE, FALSE)` payload pairs that differ
+  by a single character (`1` vs `2`) — so a reflected payload contributes
+  identical bytes to both arms and cannot itself create a difference. Injection
+  is `VALIDATED` only when some pair makes the response **track the injected
+  boolean** (`TRUE ≠ FALSE`) **while one arm still reproduces the legitimate
+  baseline** (the anchor). If every readable pair collapses (`TRUE == FALSE`),
+  the judge returns `DISPROVED` and there is no finding — the injection analogue
+  of a compliant control.
+- **Target-agnostic payload ladder.** The ladder carries an *open-context*
+  family and a *comment-terminated* (`-- -`) family that breaks out of a quoted
+  string, closes 0/1/2 grouping parens, and comments away appended SQL — the
+  common shape of a grouped `WHERE ((col LIKE '%<p>%' …) AND …)` query where the
+  parameter may even be interpolated twice. Whichever paren depth keeps the
+  injected query valid is the one that toggles the boolean; the wrong depths
+  raise a backend error that collapses (`TRUE == FALSE`) rather than
+  manufacturing a verdict. This is a generic SQL *shape*, not target logic — the
+  `baseline_value` is the only target-specific datum, and it is operator ground
+  truth, never an invented payload.
+- **PATCH + PROVE.** The loopback shield runs a **request guard** that blocks the
+  injection signature *before it reaches the upstream* (the boolean payloads
+  collapse to a benign `TRUE == FALSE`) while still forwarding the legitimate
+  baseline. `FIX_PROVEN` is earned only when the same pure judge flips
+  `VALIDATED → DISPROVED` under that live enforcement; the durable fix the
+  artifact recommends is a parameterised (bound) query.
+
+---
+
 ## Reading the decision board
 
 `investigate` renders a sequence of Rich panels. Here is what each one means.
@@ -346,7 +428,19 @@ A table (severity / title / confidence / status) of hypotheses that reached `CON
 
 ### REMEDIATION · PATCH + PROVE panel (one per confirmed finding)
 
-Shown after the findings table whenever at least one broken-access-control finding was `CONFIRMED` (unless `$SENTINEL_SKIP_REMEDIATION` is set). For each finding Sentinel synthesizes a corrective control, enforces it on a live loopback shield, and re-runs the *same* deterministic judge through it:
+Shown after each class's findings table whenever at least one finding was
+`CONFIRMED` (unless `$SENTINEL_SKIP_REMEDIATION` is set). Every class routes
+through this same shield: broken access control denies the caller, header
+posture rewrites response headers, insecure cookies rewrite `Set-Cookie`,
+privilege escalation denies the cross-tenant/cross-role request, and injection
+runs a request guard that blocks the payload upstream.
+
+**Human-in-the-loop gate.** Before any patch is deployed, Sentinel **shows** the
+proposed control and **asks for your approval** — the shield only stands up after
+you confirm. Set `$SENTINEL_ASSUME_YES=1` to auto-approve for non-interactive /
+CI runs; a non-TTY session without it declines cleanly rather than hanging. Only
+after approval does Sentinel synthesize the corrective control, enforce it on a
+live loopback shield, and re-run the *same* deterministic judge through it:
 
 - **verdict** — `✔ FIX PROVEN` / `✘ FIX NOT PROVEN` / `— NOT APPLICABLE` / `✘ ERROR`.
 - **control** — the derived rule, e.g. `MUST DENY anonymous → GET /api/Feedbacks`.
@@ -372,7 +466,7 @@ All commands are entered at the `Sentinel > ` prompt. The command word is split 
 
 | Command | Syntax | What it does |
 |---|---|---|
-| **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs to confirm findings; the same file may carry a `header_rules` section (posture) and a `cookie_rules` section (insecure cookies), or those may be supplied via `$SENTINEL_HEADER_POLICY` / `$SENTINEL_COOKIE_POLICY`. An existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage. Empty arg prints usage. |
+| **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) across all five classes and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs; the *same* file may carry a `header_rules` section (posture), a `cookie_rules` section (insecure cookies), a `privesc_matrix` section (privilege escalation), and an `injection_matrix` section (SQL injection) — or each may be supplied independently via `$SENTINEL_HEADER_POLICY` / `$SENTINEL_COOKIE_POLICY` / `$SENTINEL_PRIVESC_POLICY` / `$SENTINEL_INJECTION_POLICY`. Any section that is absent is simply skipped (no manufactured target). An existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage, `$SENTINEL_ASSUME_YES=1` to auto-approve the human-in-the-loop remediation gate (non-interactive). Empty arg prints usage. |
 | **login** | `login <target> [login_url] [cycles] [access_policy.json]` | **Authenticated reasoning (opt-in).** Drives a real browser, prompts for credentials (`getpass`), waits for you to finish login/MFA, auto-detects completion, captures the session, then runs authenticated authorization probes **and** insecure-cookie analysis on the *real* captured session cookies — followed by PATCH + PROVE for anything CONFIRMED. Requires the opt-in extra (`pip install -e ".[login]"` + `python -m playwright install chromium`); without it the command prints an actionable install hint. Credentials are held in memory for the run only — never persisted, never logged. See **The Login Tester** below. |
 | hunt | `hunt <target>` | Legacy recon+RAG pipeline. **Currently broken** (raises `NameError` in `core.py`); superseded by `investigate`. |
 | findings | `findings` | Prints the in-memory findings of the session's `SentinelCore`. Empty unless a prior `hunt` populated it — `investigate` uses a separate graph and does not fill it. |
@@ -466,6 +560,43 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
   expectations are grounded in observed `Set-Cookie` behaviour, never guessed —
   see **Insecure cookies** and **The Login Tester** above.
 
+**A fourth vulnerability class — privilege escalation — closes the same loop:**
+
+- A `privesc_matrix` section (or `$SENTINEL_PRIVESC_POLICY`) declares principals
+  (each with real session `headers` and a `control` reaching its own object) and
+  horizontal/vertical `checks`. A **fourth pure judge** fires a three-probe
+  differential — control (attacker → own object, MUST succeed), breach (attacker
+  → forbidden object/function), and an anonymous baseline (same breach with no
+  session) — and `VALIDATED`s escalation **only** when control succeeds, breach
+  is granted, and the anonymous baseline is denied. That anonymous probe rules
+  out the public-route / "app 200s everything" confound, so a bare status code is
+  never the verdict.
+- PATCH + PROVE reuses the *same* loopback shield to deny the cross-tenant /
+  cross-role request; `FIX_PROVEN` requires the full `VALIDATED → DISPROVED` flip
+  under real enforcement, with each side re-firing its own anonymous baseline.
+  Identities may be declared as tokens or bound from live Login-Tester sessions
+  **by index**. See **Privilege escalation** above.
+
+**A fifth vulnerability class — SQL injection — closes the same loop:**
+
+- An `injection_matrix` section (or `$SENTINEL_INJECTION_POLICY`) names one
+  request parameter and a benign `baseline_value`. A **fifth pure judge** runs a
+  three-way boolean differential (baseline / length-matched TRUE / length-matched
+  FALSE) and `VALIDATED`s injection **only** when a pair makes the response track
+  the injected boolean (`TRUE ≠ FALSE`) while one arm still reproduces the
+  legitimate baseline; every pair collapsing (`TRUE == FALSE`) returns
+  `DISPROVED` / no finding. A target-agnostic payload ladder (open-context +
+  comment-terminated `-- -` families) covers grouped `WHERE ((col LIKE …))` shapes
+  incl. double interpolation — a generic SQL shape, not target logic.
+- PATCH + PROVE reuses the *same* loopback shield as a **request guard** that
+  blocks the injection signature upstream (the boolean arms collapse) while
+  forwarding the legitimate baseline; `FIX_PROVEN` requires the pure judge to flip
+  `VALIDATED → DISPROVED` under that live enforcement. Proven live vs Juice Shop:
+  `q` on `/rest/products/search` (grouped double-interpolated `LIKE` query) →
+  `CONFIRMED` → `FIX_PROVEN`; the parameterised `name` filter on `/api/Products`
+  → every pair collapses → `DISPROVED`/no finding (the compliant control). See
+  **SQL injection** above.
+
 **Authenticated reasoning — the Login Tester:**
 
 - An opt-in browser session (Playwright extra) captures a real logged-in identity,
@@ -476,12 +607,13 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 
 **Validation — a deterministic, network-free test suite:**
 
-- **67** tests cover the pure judges, the seeders, the enforcer's mutation
-  primitives, and full offline FIND→CONFIRM→FIX_PROVEN flows with isolation checks
-  across all three classes (plus a live headless-browser capture gated behind an
+- **122** tests cover the five pure judges, the seeders, the enforcer's mutation
+  primitives (header / cookie rewrite, access-control denial, request-guard SQLi
+  block), and full offline FIND→CONFIRM→FIX_PROVEN flows with isolation checks
+  across all five classes (plus a live headless-browser capture gated behind an
   env var). They run with **no network** — every verdict is reproduced by the pure
   judge against a canned oracle — so the epistemic contract itself is regression-
-  tested: `66 passed, 1 skipped` by default.
+  tested: `122 passed, 1 skipped` by default.
 
 **Target-agnostic — proven on two independent live targets:**
 
@@ -489,15 +621,29 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
 
 **Working live, end-to-end (the *patch → prove* half):**
 
-- For each `CONFIRMED` broken-access-control finding, Sentinel synthesizes a provider-agnostic **enforcement shield** (an `AccessControlRule`), renders deployable artifacts (nginx / Envoy RBAC / Caddy / portable JSON), stands the rule up on a live loopback reverse proxy, and **re-runs the same deterministic judge through it**.
-- `FIX_PROVEN` is reported *only* when that judge flips `VALIDATED → DISPROVED` under real enforcement (observed `403`); anything else is `FIX_FAILED` / `NOT_APPLICABLE` / `ERROR`. The confirmed hypothesis and finding are structurally isolated and never mutated by verification.
+- For each `CONFIRMED` finding — in any of the five classes — Sentinel first
+  **shows the proposed control and takes your approval** (the human-in-the-loop
+  gate; `$SENTINEL_ASSUME_YES=1` auto-approves for CI), then synthesizes a
+  provider-agnostic **enforcement shield**, renders deployable artifacts (nginx /
+  Envoy RBAC / Caddy / portable JSON), stands the rule up on a live loopback
+  reverse proxy, and **re-runs the same deterministic judge through it**. The one
+  shield carries every primitive: access-control denial, response-header rewrite,
+  `Set-Cookie` rewrite, cross-tenant/cross-role denial, and an upstream
+  request-guard that blocks a SQLi signature.
+- `FIX_PROVEN` is reported *only* when that judge flips `VALIDATED → DISPROVED` under real enforcement; anything else is `FIX_FAILED` / `NOT_APPLICABLE` / `ERROR`. The confirmed hypothesis and finding are structurally isolated and never mutated by verification.
 - **URL-only by default** (no source code required — the shield *is* the deployable fix). When the target's source repository is also supplied (positional dir arg or `$SENTINEL_SOURCE_ROOT`), Sentinel additionally emits a root-cause unified-diff authorization guard; its live proof needs the operator's own rebuild.
 
 **Next milestones (in rough priority order):**
 
-1. Multi-principal / differential authorization reasoning (compare two principals against the same resource).
-2. Wire policy-violation hypotheses from differential signals, not only from the declared oracle.
-3. **Bug-chaining across classes** — auto-compose a proven authorization finding with a proven cookie/misconfiguration finding into a single causal attack narrative. Three independent classes now close the loop live, and the **Login Tester already assembles the *ingredients* of a chain** for one session (session captured → weak session cookie CONFIRMED → endpoints reachable as that authenticated principal), surfaced together under one session context. Auto-composing the causal narrative from those ingredients is the honest remaining frontier and is deliberately *not* manufactured today.
-4. Housekeeping: fix the broken legacy `hunt` and implement the `resume`/`report` stubs. (The stale `README.md` has been refreshed — it now points at `./sentinel` and this guide.)
+1. **Bug-chaining across classes** — auto-compose proven findings from two
+   classes (e.g. a weak session cookie + an endpoint reachable as that
+   authenticated principal, or a privilege-escalation boundary + an injectable
+   parameter behind it) into a single causal attack narrative. Five independent
+   classes now close the loop live, and the **Login Tester already assembles the
+   *ingredients* of a chain** for one session, surfaced together under one session
+   context. Auto-composing the causal narrative from those ingredients is the
+   honest remaining frontier and is deliberately *not* manufactured today.
+2. Wire policy-violation hypotheses from differential signals discovered live, not only from the declared oracle.
+3. Housekeeping: fix the broken legacy `hunt` and implement the `resume`/`report` stubs. (The `README.md` points at `./sentinel` and this guide.)
 
 Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI that closes the full find → prove → patch → prove loop live** — every verdict traceable to the deterministic judge, never to a status code or the LLM.
