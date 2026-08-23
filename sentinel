@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
 source .venv/bin/activate
-python3 app/cli.py
+# Run as a module (-m) so `app` is a proper package and cli.py's relative
+# imports (`from .core import ...`) resolve. `python3 app/cli.py` executes the
+# file as a top-level script with no parent package and crashes with
+# "attempted relative import with no known parent package".
+exec python3 -m app.cli "$@"
