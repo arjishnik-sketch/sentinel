@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "description": "GENERIC, DEPLOYMENT-ORIENTED injection-matrix template. This is EXTERNAL GROUND TRUTH an operator supplies for THEIR OWN target — the Sentinel engine holds zero knowledge of any host, route, or parameter. Point Sentinel at any stack and only this data changes. Load it standalone via `SENTINEL_INJECTION_POLICY=samples/injection_matrix.example.json ./sentinel investigate <target>`, or paste an `injection_matrix` section like this into your combined access-policy file so one file drives every vulnerability class. Each check names ONE request parameter and a benign `baseline_value` that returns a legitimate response. The check makes no security claim on its own: it poses a question the deterministic judge answers with a live three-way boolean differential (baseline / boolean-TRUE / boolean-FALSE). A finding is CONFIRMED only when a length-matched TRUE/FALSE pair makes the response track the injected boolean while one arm still reproduces the legitimate baseline. Replace every value below with your target's real endpoints.",
+  "injection_matrix": {
+    "success_statuses": [200, 201, 204],
+    "checks": [
+      {
+        "method": "GET",
+        "path": "/products/search",
+        "param": "q",
+        "location": "query",
+        "baseline_value": "zqxjv",
+        "severity": "HIGH",
+        "rationale": "QUERY-STRING parameter. Pick a benign baseline_value that yields a stable, legitimate response your boolean-FALSE arm can reproduce exactly — an empty-result search string (like this random token) is the most robust choice, because the FALSE arm degenerates to the same empty result while the TRUE arm returns everything. The judge anchors the differential to this legitimate baseline; it is never an invented payload."
+      },
+      {
+        "method": "POST",
+        "path": "/login",
+        "param": "username",
+        "location": "body_form",
+        "baseline_value": "not-a-real-user",
+        "severity": "CRITICAL",
+        "rationale": "URL-ENCODED BODY parameter (application/x-www-form-urlencoded). An auth form is a classic injection sink. The benign baseline should be a value that produces a normal 'login failed' response; the TRUE arm may flip it to a success/redirect, the length-matched FALSE arm reproduces the failure. Declare only the field you are authorised to test."
+      },
+      {
+        "method": "POST",
+        "path": "/api/orders/search",
+        "param": "term",
+        "location": "body_json",
+        "baseline_value": "zqxjv",
+        "severity": "HIGH",
+        "rationale": "JSON BODY parameter (application/json). The payload is injected as the value of the named top-level JSON field. Use a benign term that returns a legitimate (often empty) result the FALSE arm can match. Nested JSON paths are out of scope for this data model — declare the top-level field the parameter maps to."
+      }
+    ]
+  }
+}

@@ -75,5 +75,27 @@
         }
       ]
     }
-  ]
+  ],
+  "injection_matrix": {
+    "checks": [
+      {
+        "method": "GET",
+        "path": "/rest/products/search",
+        "param": "q",
+        "location": "query",
+        "baseline_value": "zqxjv",
+        "severity": "HIGH",
+        "rationale": "LIVE-VERIFIED, CONFIRMED-expected. The 'q' parameter is interpolated into a grouped `WHERE ((name LIKE '%q%' OR description LIKE '%q%') ...)` query. The benign baseline 'zqxjv' matches no product, so it returns a legitimate empty result; the boolean-FALSE arm (`zqxjv')) OR 1=2-- -`) reproduces that same empty result exactly, while the boolean-TRUE arm (`zqxjv')) OR 1=1-- -`) dumps the whole product table. TRUE != FALSE with FALSE anchored to the legitimate baseline => the deterministic judge reproduces the contradiction and CONFIRMS a boolean-blind SQL injection. The request-guard shield then blocks the payload (TRUE and FALSE collapse) and the fix proves out. The baseline is a benign search string chosen to yield a stable legitimate response — it is operator ground truth, not an invented payload. NOTE: choose a baseline_value that returns a legitimate response your FALSE arm can reproduce (an empty-result string like this, or a value the length-matched FALSE payload leaves unchanged); this detail is target-specific DATA, the engine holds none of it. A parameterised handler is the durable fix."
+      },
+      {
+        "method": "GET",
+        "path": "/api/Products",
+        "param": "name",
+        "location": "query",
+        "baseline_value": "apple",
+        "severity": "HIGH",
+        "rationale": "LIVE-VERIFIED COMPLIANT CONTROL. The REST `/api/Products` collection applies its `name` filter as a parameterised (bound) equality, NOT string concatenation. The benign baseline 'apple' returns a legitimate empty result, and every length-matched boolean pair returns that SAME response — TRUE == FALSE for all pairs, so the differential collapses and the deterministic judge returns DISPROVED with NO finding. This is the injection analogue of the compliant header controls above: it demonstrates that Sentinel reports only reproduced contradictions and never manufactures an injection verdict from a bare status code."
+      }
+    ]
+  }
 }

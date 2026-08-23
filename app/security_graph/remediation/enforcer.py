@@ -19,11 +19,12 @@ lifetime of a single verification.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 from .model import AccessControlRule
@@ -257,15 +258,140 @@ def apply_cookie_mutations(resp_headers, method, path, cookie_rules):
     return result
 
 
+# Injection-signature patterns for the request-guard (virtual patch). These
+# recognise the boolean-tautology / boolean-contradiction / UNION / stacked-
+# comment shapes a SQL-injection probe carries in a parameter value. They are
+# deliberately payload-shape signatures, not target-specific: the same guard
+# blocks the whole injection family on any stack. Nothing here decides a
+# vulnerability — the guard only refuses to forward a request whose parameter
+# carries an injection signature, so a fresh boolean differential through the
+# shield collapses (TRUE and FALSE both become 403) and the pure judge can
+# observe the fix. Matching is case-insensitive on the URL-decoded value.
+_SQLI_SIGNATURES = (
+    # quoted boolean: ' OR '1'='1  /  ") AND ("1"="2  /  ')) OR (('1'='1
+    re.compile(r"""['"]\s*\)*\s*(or|and)\s*\(*\s*['"]?\s*\d""", re.IGNORECASE),
+    # numeric boolean: OR 1=1 / AND 1=2
+    re.compile(r"""\b(or|and)\b\s+\d+\s*=\s*\d""", re.IGNORECASE),
+    # trivial tautology/contradiction: '1'='1  /  "2"="2
+    re.compile(r"""['"]\s*\d+\s*['"]?\s*=\s*['"]?\s*\d""", re.IGNORECASE),
+    # UNION-based extraction
+    re.compile(r"""\bunion\b(\s+all)?\s+\bselect\b""", re.IGNORECASE),
+    # SQL comment / statement terminators used to truncate the original query
+    re.compile(r"""(--\s|#|/\*)"""),
+)
+
+
+def _matches_sqli_signature(value: str) -> bool:
+    """Pure: True when a parameter value carries a SQL-injection signature."""
+    if not value:
+        return False
+    return any(pattern.search(value) for pattern in _SQLI_SIGNATURES)
+
+
+@dataclass(frozen=True)
+class RequestGuardRule:
+    """
+    A provider-agnostic request-guard (virtual patch) for one injectable
+    parameter on a route. The shield inspects the REQUEST — the value of
+    `param` in the declared `location` — and refuses to forward it (403) when
+    it carries a SQL-injection signature, BEFORE the request ever reaches the
+    upstream.
+
+    `location` is one of:
+      query      -> the parameter is read from the URL query string
+      body_form  -> the parameter is read from an urlencoded request body
+      body_json  -> the parameter is a top-level key of a JSON request body
+
+    `param` empty means "guard every parameter in this location". This is a
+    stop-gap gateway control; the durable fix is a parameterised query in the
+    handler. Nothing here interprets a response — it only blocks a malicious
+    request shape so the deterministic judge can prove the differential is gone.
+    """
+
+    method: str
+    path: str
+    param: str = ""
+    location: str = "query"
+
+
+def _guard_candidate_values(
+    rule: "RequestGuardRule",
+    query: str,
+    body: bytes | None,
+) -> list[str]:
+    """Pure: the parameter values a guard rule must inspect for this request."""
+    values: list[str] = []
+    if rule.location == "query":
+        parsed = parse_qs(query or "", keep_blank_values=True)
+        source = parsed
+    elif rule.location == "body_form":
+        text = body.decode("utf-8", "replace") if body else ""
+        source = parse_qs(text, keep_blank_values=True)
+    elif rule.location == "body_json":
+        text = body.decode("utf-8", "replace") if body else ""
+        try:
+            decoded = json.loads(text) if text else {}
+        except (ValueError, TypeError):
+            decoded = {}
+        source = {}
+        if isinstance(decoded, dict):
+            for key, val in decoded.items():
+                source[str(key)] = [val if isinstance(val, str) else json.dumps(val)]
+    else:
+        return values
+
+    if rule.param:
+        values.extend(str(v) for v in source.get(rule.param, ()))
+    else:
+        for entry in source.values():
+            values.extend(str(v) for v in entry)
+    return values
+
+
+def evaluate_request_guard(method, path, query, body, guard_rules) -> str:
+    """
+    Pure request-side decision for the injection virtual patch.
+
+    Returns ``"deny"`` when any guard rule matches this method+path and the
+    guarded parameter value carries a SQL-injection signature, else
+    ``"forward"``. It inspects only the REQUEST (query/body), never a response,
+    so it cannot manufacture a verdict — it only refuses to relay a malicious
+    request, which is exactly what collapses the boolean differential the pure
+    judge then re-measures.
+    """
+    method_norm = (method or "").strip().upper()
+    path_norm = path or ""
+    for rule in guard_rules:
+        if rule.method.strip().upper() != method_norm:
+            continue
+        if rule.path != path_norm:
+            continue
+        for value in _guard_candidate_values(rule, query, body):
+            if _matches_sqli_signature(value):
+                return "deny"
+    return "forward"
+
+
 class _EnforcementServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, *, rules, upstream_base, header_rules=(), cookie_rules=()):
+    def __init__(
+        self,
+        address,
+        handler,
+        *,
+        rules,
+        upstream_base,
+        header_rules=(),
+        cookie_rules=(),
+        guard_rules=(),
+    ):
         super().__init__(address, handler)
         self.rules = tuple(rules)
         self.header_rules = tuple(header_rules)
         self.cookie_rules = tuple(cookie_rules)
+        self.guard_rules = tuple(guard_rules)
         parsed = urlsplit(upstream_base)
         self.upstream_scheme = (parsed.scheme or "http").lower()
         self.upstream_netloc = parsed.netloc
@@ -293,6 +419,10 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
     def _handle(self):
         server = self.server
         split = urlsplit(self.path)
+        # The request body is read exactly ONCE here (self.rfile is single-use)
+        # and then handed to both the request-guard and the forwarder.
+        body = self._read_body()
+
         decision = evaluate_request(
             server.rules,
             self.command,
@@ -306,7 +436,32 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
                 {"error": "Forbidden", "by": "sentinel-remediation"},
             )
             return
-        self._forward(server)
+
+        # Request-guard / virtual patch (injection remediation): inspect the
+        # request's own query/body and refuse to forward an injection signature
+        # BEFORE it reaches the upstream. Access-control denial (above) is a
+        # different, header-based decision and is unaffected.
+        if server.guard_rules:
+            guard = evaluate_request_guard(
+                self.command,
+                split.path,
+                split.query,
+                body,
+                server.guard_rules,
+            )
+            if guard == "deny":
+                _json_response(
+                    self,
+                    403,
+                    {
+                        "error": "Forbidden",
+                        "by": "sentinel-remediation",
+                        "reason": "request-guard",
+                    },
+                )
+                return
+
+        self._forward(server, body)
 
     def _read_body(self):
         length = self.headers.get("Content-Length")
@@ -318,11 +473,11 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(count) if count > 0 else None
 
-    def _forward(self, server):
+    def _forward(self, server, body):
         # self.path preserves the exact path + query; the host is fixed to
-        # the single upstream this enforcer was constructed with.
+        # the single upstream this enforcer was constructed with. The body was
+        # already read once by _handle and is passed in here.
         upstream_url = server.upstream_base + self.path
-        body = self._read_body()
 
         forwarded = {}
         for name, value in self.headers.items():
@@ -432,13 +587,15 @@ class RemediationEnforcer:
     can never reach any host other than the engagement target.
     """
 
-    def __init__(self, rules, upstream_base: str, *, header_rules=(), cookie_rules=()):
+    def __init__(self, rules, upstream_base: str, *, header_rules=(), cookie_rules=(), guard_rules=()):
         if isinstance(rules, AccessControlRule):
             rules = (rules,)
         if isinstance(header_rules, ResponseHeaderRule):
             header_rules = (header_rules,)
         if isinstance(cookie_rules, CookieAttributeRule):
             cookie_rules = (cookie_rules,)
+        if isinstance(guard_rules, RequestGuardRule):
+            guard_rules = (guard_rules,)
         self._server = _EnforcementServer(
             ("127.0.0.1", 0),
             _EnforcementHandler,
@@ -446,6 +603,7 @@ class RemediationEnforcer:
             upstream_base=upstream_base,
             header_rules=header_rules,
             cookie_rules=cookie_rules,
+            guard_rules=guard_rules,
         )
         self._thread: threading.Thread | None = None
 

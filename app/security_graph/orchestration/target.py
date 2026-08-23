@@ -213,6 +213,18 @@ class TargetResearchPipeline:
             )
         )
 
+        # The SQL-injection class reuses the same HTTP fact executor (which
+        # already records status + response-body length, the boolean
+        # differential's fingerprint) under its own kind — no shared
+        # interpretation; the pure judge decides the differential.
+        from ..injection.executor import InjectionProbeExecutor
+
+        registry.register(
+            InjectionProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

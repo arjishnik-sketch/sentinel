@@ -1100,6 +1100,201 @@ def _privesc_remediation_panel(outcome) -> Panel:
     )
 
 
+def _injection_matrix_panel(policy, source: str) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "injection matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] declared "
+        "injectable surface(s)",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[white]{check.param}[/white] "
+            f"[{_C_DIM}]MUST NOT alter the query ·[/{_C_DIM}] "
+            f"[{_C_DIM}]{check.location} · {check.method} "
+            f"{_short(check.path, 32)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        "\nGround truth only. Each surface is proven by a THREE-WAY BOOLEAN "
+        "differential on the live target: a benign BASELINE probe (which must "
+        "return a legitimate response — the anchor), plus length-matched "
+        "(TRUE, FALSE) payload pairs. Because each pair differs by a single "
+        "digit, a reflected payload contributes identical bytes to both arms — "
+        "so any TRUE≠FALSE difference can only come from the backend evaluating "
+        "the injected boolean. A bare status code is never the verdict.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ SQL-INJECTION MATRIX ORACLE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _injection_findings_panel(results) -> Panel:
+    """Render every injection verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("param")
+    table.add_column("baseline", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ no injection",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = (
+            probe.baseline_status_code
+            if probe.baseline_status_code is not None
+            else "—"
+        )
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.param, 20)}[/white]",
+            f"[{_C_DIM}]{code}[/{_C_DIM}]",
+            _short(probe.reason, 46),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} SQL injection(s) reproduced against the live target — a "
+        f"length-matched boolean payload provably toggled the backend query "
+        f"while one arm reproduced the legitimate baseline — and CONFIRMED; a "
+        f"parameter that does not influence the query yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ SQL INJECTION · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _injection_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed injection finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]({rule.location})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 34)}[/white]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]parameterised (prepared) query in the handler[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy"
+            f"[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ INJECTION REMEDIATION · PATCH + PROVE"
+        f"[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -1138,6 +1333,8 @@ def run(arg):
             f"the same file, or via $SENTINEL_COOKIE_POLICY[/dim]\n"
             f"[dim]privilege-escalation (login matrix) lives in a "
             f"'privesc_matrix' section, or via $SENTINEL_PRIVESC_POLICY[/dim]\n"
+            f"[dim]sql-injection (boolean differential) lives in an "
+            f"'injection_matrix' section, or via $SENTINEL_INJECTION_POLICY[/dim]\n"
             f"[dim]with no policy, header + cookie passes run off a built-in "
             f"secure baseline; set $SENTINEL_NO_BASELINE=1 to disable it[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
@@ -1693,6 +1890,142 @@ def run(arg):
                         f"[{_C_BAD}]privilege escalation stage failed"
                         f"[/{_C_BAD}]"
                     ),
+                    border_style=_C_BAD,
+                )
+            )
+
+    # --- SQL INJECTION (BOOLEAN DIFFERENTIAL) -----------------------------
+    # A fifth, server-side vulnerability class (Tier 2): does an
+    # attacker-controlled parameter reach the backend query? Where the classes
+    # above reason about who may reach a resource and what a response ships,
+    # this asks the classic injection question — and answers it with a THREE-WAY
+    # BOOLEAN differential (a benign baseline + length-matched TRUE/FALSE payload
+    # pairs) so a bare status/error is never the verdict: injection is CONFIRMED
+    # only when a length-matched pair makes the response track the injected
+    # boolean while one arm still reproduces the legitimate baseline. Like the
+    # privesc class there is deliberately NO secure-baseline fallback — proving
+    # injection needs a declared injectable surface (endpoint + parameter + a
+    # benign value) only the operator can supply, so an undeclared matrix simply
+    # means "skip". The matrix lives in an `injection_matrix` section of the
+    # policy file, or in a dedicated file via $SENTINEL_INJECTION_POLICY.
+    injection_policy = None
+    injection_source = os.environ.get("SENTINEL_INJECTION_POLICY") or None
+    if injection_source is None and policy_path:
+        # A combined policy file drives this class only if it carries a matrix;
+        # otherwise parsing the anonymous access policy as an injection matrix
+        # would yield an empty (no-check) policy and silently skip anyway.
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("injection_matrix"):
+                injection_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            injection_source = None
+
+    if injection_source:
+        from app.security_graph.injection import load_injection_policy
+
+        try:
+            injection_policy = load_injection_policy(injection_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load injection matrix "
+                        f"'{injection_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]injection matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            injection_policy = None
+
+    if injection_policy is not None and injection_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]SQL INJECTION · "
+                f"BOOLEAN DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(_injection_matrix_panel(injection_policy, injection_source))
+        try:
+            from app.security_graph.injection import run_injection_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running baseline + boolean-pair differential + "
+                f"judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                injection_results = run_injection_investigation(
+                    result.graph,
+                    injection_policy,
+                    target_base=result.target,
+                )
+            if injection_results:
+                console.print(_injection_findings_panel(injection_results))
+
+            injection_confirmed = result.graph.findings_for(
+                kind="injection", status="OPEN"
+            )
+            if injection_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]INJECTION REMEDIATION · PATCH + PROVE · "
+                        f"{len(injection_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.injection import (
+                    remediate_injection_findings,
+                    synthesize_injection_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in injection_confirmed:
+                    plan = synthesize_injection_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "request-guard virtual patch (no plan derived)"
+                    else:
+                        control = (
+                            f"request-guard {plan.rule.param} "
+                            f"({plan.rule.location}) → "
+                            f"{plan.rule.method} {plan.rule.path}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="sql injection",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the request-guard shield + "
+                        f"proving the injection no longer reproduces…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        injection_outcomes = remediate_injection_findings(
+                            result.graph
+                        )
+                    for remediation in injection_outcomes:
+                        console.print(_injection_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]sql injection stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )
