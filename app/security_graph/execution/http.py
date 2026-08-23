@@ -7,6 +7,23 @@ from ..models import Evidence, ExecutionResult, Experiment
 from .base import ExperimentExecutor
 
 
+def _collect_set_cookie(headers) -> list[str]:
+    """
+    Losslessly capture every ``Set-Cookie`` response header as a list.
+
+    ``dict(headers.items())`` (used for ``response_headers``) collapses the
+    duplicate ``Set-Cookie`` headers a server may emit into a single entry,
+    which would hide per-cookie security attributes from the cookie-posture
+    judge. This preserves each raw ``Set-Cookie`` line exactly as received.
+    The judge and enforcer never trust this list to *mean* anything on its
+    own — it is a fact, parsed only by the deterministic cookie judge.
+    """
+    get_all = getattr(headers, "get_all", None)
+    if get_all is None:
+        return []
+    return list(get_all("Set-Cookie") or [])
+
+
 class HttpAuthorizationExecutor(ExperimentExecutor):
     """
     Execute one explicitly specified HTTP authorization experiment.
@@ -119,11 +136,13 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
                 status_code = response.status
                 response_body = response.read()
                 response_headers = dict(response.headers.items())
+                set_cookies = _collect_set_cookie(response.headers)
 
         except HTTPError as exc:
             status_code = exc.code
             response_headers = dict(exc.headers.items())
             response_body = exc.read()
+            set_cookies = _collect_set_cookie(exc.headers)
 
         except URLError as exc:
             raise RuntimeError(
@@ -138,6 +157,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             "url": request_spec.url,
             "status_code": status_code,
             "response_headers": response_headers,
+            "set_cookie": set_cookies,
             "response_body_length": len(response_body),
             "expected_statuses": request_spec.expected_statuses,
             "expected_outcome": request_spec.expected_outcome,

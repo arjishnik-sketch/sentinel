@@ -11,6 +11,7 @@ from ..models import (
 _SEVERITY_BY_KIND = {
     "authorization_policy_violation": "HIGH",
     "security_misconfiguration": "MEDIUM",
+    "insecure_cookie": "MEDIUM",
 }
 _DEFAULT_SEVERITY = "HIGH"
 

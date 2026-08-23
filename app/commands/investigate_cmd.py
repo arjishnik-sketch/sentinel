@@ -57,7 +57,7 @@ def _banner() -> Panel:
     art.append("AUTONOMOUS AUTHORIZATION RESEARCH", style=f"bold {_C_ACCENT}")
     art.append("\n")
     art.append(
-        "find → reason → prove   ·   evidence-driven   ·   advisory-AI bounded",
+        "find → reason → prove → patch → prove   ·   evidence-driven   ·   advisory-AI bounded",
         style=_C_DIM,
     )
     return Panel(art, border_style=_C_PRIMARY, padding=(0, 2))
@@ -655,6 +655,201 @@ def _posture_remediation_panel(outcome) -> Panel:
     )
 
 
+def _cookie_policy_panel(policy, source: str) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    total = sum(len(rule.expectations) for rule in policy.rules)
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "declared posture",
+        f"[{_C_ACCENT}]{total}[/{_C_ACCENT}] cookie expectation(s) across "
+        f"{len(policy.rules)} route(s)",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    shown = 0
+    for rule in policy.rules:
+        for exp in rule.expectations:
+            if shown >= 10:
+                break
+            want = exp.check.replace("_", " ").upper()
+            token = exp.flag or exp.value
+            if token:
+                want = f"{want} '{token}'"
+            sev_style = {
+                "CRITICAL": _C_BAD,
+                "HIGH": _C_BAD,
+                "MEDIUM": _C_WARN,
+                "LOW": _C_DIM,
+            }.get(exp.severity, _C_DIM)
+            cookie_label = exp.cookie_name or "· every cookie"
+            rules.add_row(
+                f"[{sev_style}]{exp.severity:<8}[/{sev_style}] "
+                f"[white]{cookie_label}[/white] "
+                f"[{_C_DIM}]{want}[/{_C_DIM}] "
+                f"[{_C_DIM}]· {rule.method} {_short(rule.path, 32)}[/{_C_DIM}]"
+            )
+            shown += 1
+
+    note = Text(
+        "\nGround truth only. A declared cookie expectation is a question "
+        "for the judge — a finding requires a Set-Cookie the target actually "
+        "sets to contradict it. A compliant, or simply unset, cookie yields "
+        "DISPROVED and no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ COOKIE POSTURE ORACLE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _cookie_findings_panel(results) -> Panel:
+    """Render every cookie probe verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("http", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ no finding",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = probe.status_code if probe.status_code is not None else "—"
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{code}[/white]",
+            _short(probe.reason, 62),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} insecure cookie(s) reproduced against the live "
+        f"target and CONFIRMED; compliant or unset cookies yield no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ COOKIES · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _cookie_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed cookie finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        op_label = {
+            "add_flag": "ADD FLAG",
+            "remove_flag": "STRIP FLAG",
+            "set_samesite": "SET SAMESITE",
+        }.get(rule.op, rule.op.upper())
+        detail = f" → '{rule.value}'" if rule.op == "set_samesite" else ""
+        token = rule.flag or rule.value
+        cookie_label = rule.cookie_name or "every"
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_PRIMARY}]{op_label}[/bold {_C_PRIMARY}] "
+            f"[white]{token}[/white]{detail} "
+            f"[{_C_DIM}]on {cookie_label} cookie · "
+            f"{rule.method} {_short(rule.path, 32)}[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · caddy · envoy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ COOKIE REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -689,6 +884,8 @@ def run(arg):
             f"$SENTINEL_SOURCE_ROOT[/dim]\n"
             f"[dim]header-posture rules live in a 'header_rules' section of "
             f"the same file, or via $SENTINEL_HEADER_POLICY[/dim]\n"
+            f"[dim]insecure-cookie rules live in a 'cookie_rules' section of "
+            f"the same file, or via $SENTINEL_COOKIE_POLICY[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
             f"PATCH + PROVE stage[/dim]"
         )
@@ -907,6 +1104,96 @@ def run(arg):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]header posture stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # --- INSECURE COOKIES -------------------------------------------------
+    # A third, independent vulnerability class: are the cookies this endpoint
+    # issues safe to hold a session in (HttpOnly / Secure / a non-permissive
+    # SameSite)? A weak session cookie is the classic pivot for chaining. This
+    # runs as an isolated pass on the same graph and obeys the identical
+    # epistemic contract: an operator cookie oracle declares posture, the live
+    # probe observes the real Set-Cookie, a PURE judge decides, and a finding
+    # materialises only on a Set-Cookie the target actually sets contradicting
+    # it. The oracle lives in a `cookie_rules` section of the policy file, or
+    # via $SENTINEL_COOKIE_POLICY.
+    cookie_policy = None
+    cookie_source = os.environ.get("SENTINEL_COOKIE_POLICY") or policy_path
+    if cookie_source:
+        from app.security_graph.cookies import load_cookie_policy
+
+        try:
+            cookie_policy = load_cookie_policy(cookie_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load cookie policy "
+                        f"'{cookie_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]cookie policy error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            cookie_policy = None
+
+    if cookie_policy is not None and cookie_policy.rules:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]INSECURE COOKIES · "
+                f"SESSION SAFETY[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(_cookie_policy_panel(cookie_policy, cookie_source))
+        try:
+            from app.security_graph.cookies import run_cookie_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]probing Set-Cookie + judging live…"
+                f"[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                cookie_results = run_cookie_investigation(
+                    result.graph,
+                    cookie_policy,
+                    target_base=result.target,
+                )
+            if cookie_results:
+                console.print(_cookie_findings_panel(cookie_results))
+
+            cookie_confirmed = result.graph.findings_for(
+                kind="insecure_cookie", status="OPEN"
+            )
+            if cookie_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]COOKIE REMEDIATION · PATCH + PROVE · "
+                        f"{len(cookie_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.cookies import (
+                    remediate_cookie_findings,
+                )
+
+                with console.status(
+                    f"[{_C_OK}]hardening Set-Cookie + proving live…"
+                    f"[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    cookie_outcomes = remediate_cookie_findings(result.graph)
+                for remediation in cookie_outcomes:
+                    console.print(_cookie_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]insecure cookie stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

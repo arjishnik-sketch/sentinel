@@ -168,14 +168,104 @@ def apply_header_mutations(resp_headers, method, path, header_rules):
     return result
 
 
+@dataclass(frozen=True)
+class CookieAttributeRule:
+    """
+    A provider-agnostic corrective mutation for one ``Set-Cookie`` attribute
+    on a route. The shield applies it to the *forwarded* response so a fresh
+    cookie probe observes the hardened cookie.
+
+    `op` is the enforcement primitive, not an observation:
+      add_flag     -> append the valueless flag (`HttpOnly` / `Secure`) if absent
+      remove_flag  -> drop the valueless flag if present
+      set_samesite -> set/replace ``SameSite=<value>``
+
+    `cookie_name` empty means "every Set-Cookie on this route".
+    """
+
+    method: str
+    path: str
+    cookie_name: str
+    op: str
+    flag: str = ""
+    value: str = ""
+
+
+def _rewrite_cookie(value: str, rules) -> str:
+    """Pure: apply the applicable cookie-attribute mutations to one line."""
+    segments = [seg.strip() for seg in value.split(";")]
+    head = segments[0]
+    attrs = [seg for seg in segments[1:] if seg]
+    for rule in rules:
+        if rule.op == "add_flag":
+            flag = rule.flag
+            if flag and not any(a.lower() == flag.lower() for a in attrs):
+                attrs.append(flag)
+        elif rule.op == "remove_flag":
+            flag = rule.flag
+            attrs = [a for a in attrs if a.lower() != flag.lower()]
+        elif rule.op == "set_samesite":
+            replaced = False
+            new_attrs = []
+            for a in attrs:
+                if "=" in a and a.split("=", 1)[0].strip().lower() == "samesite":
+                    new_attrs.append(f"SameSite={rule.value}")
+                    replaced = True
+                else:
+                    new_attrs.append(a)
+            if not replaced:
+                new_attrs.append(f"SameSite={rule.value}")
+            attrs = new_attrs
+    return "; ".join([head, *attrs])
+
+
+def apply_cookie_mutations(resp_headers, method, path, cookie_rules):
+    """
+    Pure: return a new ``[(name, value), ...]`` list with the corrective
+    cookie-attribute mutations for this method+path applied to matching
+    ``Set-Cookie`` headers. No security verdict is made here — this only
+    hardens the cookie the way the operator's declared posture requires, so
+    the deterministic judge can re-decide honestly. Duplicate ``Set-Cookie``
+    headers are preserved (each is rewritten independently).
+    """
+    method_norm = (method or "").strip().upper()
+    path_norm = path or ""
+    active = [
+        rule
+        for rule in cookie_rules
+        if rule.method.strip().upper() == method_norm
+        and rule.path == path_norm
+    ]
+    if not active:
+        return list(resp_headers)
+
+    result = []
+    for name, value in resp_headers:
+        if name.lower() != "set-cookie":
+            result.append((name, value))
+            continue
+        cookie_name = value.split(";", 1)[0].split("=", 1)[0].strip()
+        applicable = [
+            rule
+            for rule in active
+            if not rule.cookie_name or rule.cookie_name == cookie_name
+        ]
+        if not applicable:
+            result.append((name, value))
+            continue
+        result.append((name, _rewrite_cookie(value, applicable)))
+    return result
+
+
 class _EnforcementServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, *, rules, upstream_base, header_rules=()):
+    def __init__(self, address, handler, *, rules, upstream_base, header_rules=(), cookie_rules=()):
         super().__init__(address, handler)
         self.rules = tuple(rules)
         self.header_rules = tuple(header_rules)
+        self.cookie_rules = tuple(cookie_rules)
         parsed = urlsplit(upstream_base)
         self.upstream_scheme = (parsed.scheme or "http").lower()
         self.upstream_netloc = parsed.netloc
@@ -283,6 +373,19 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
                 server.header_rules,
             )
 
+        # Corrective cookie-attribute mutations (insecure-cookie remediation):
+        # matching Set-Cookie headers are hardened (HttpOnly / Secure /
+        # SameSite) so a fresh cookie probe through the shield observes the
+        # corrected cookie. Duplicate Set-Cookie lines are preserved.
+        if server.cookie_rules:
+            split = urlsplit(self.path)
+            resp_headers = apply_cookie_mutations(
+                resp_headers,
+                self.command,
+                split.path,
+                server.cookie_rules,
+            )
+
         self.send_response_only(status)
         # The shield must not stamp its OWN identity onto the forwarded
         # response. Unlike send_response(), send_response_only() adds no
@@ -329,17 +432,20 @@ class RemediationEnforcer:
     can never reach any host other than the engagement target.
     """
 
-    def __init__(self, rules, upstream_base: str, *, header_rules=()):
+    def __init__(self, rules, upstream_base: str, *, header_rules=(), cookie_rules=()):
         if isinstance(rules, AccessControlRule):
             rules = (rules,)
         if isinstance(header_rules, ResponseHeaderRule):
             header_rules = (header_rules,)
+        if isinstance(cookie_rules, CookieAttributeRule):
+            cookie_rules = (cookie_rules,)
         self._server = _EnforcementServer(
             ("127.0.0.1", 0),
             _EnforcementHandler,
             rules=rules,
             upstream_base=upstream_base,
             header_rules=header_rules,
+            cookie_rules=cookie_rules,
         )
         self._thread: threading.Thread | None = None
 

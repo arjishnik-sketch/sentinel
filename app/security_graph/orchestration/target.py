@@ -192,6 +192,16 @@ class TargetResearchPipeline:
             )
         )
 
+        # The insecure-cookie class likewise reuses the same HTTP fact
+        # executor (now capturing every raw Set-Cookie) under its own kind.
+        from ..cookies.executor import CookieProbeExecutor
+
+        registry.register(
+            CookieProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod
