@@ -1100,7 +1100,7 @@ def _privesc_remediation_panel(outcome) -> Panel:
     )
 
 
-def _injection_matrix_panel(policy, source: str) -> Panel:
+def _injection_matrix_panel(policy, source: str, *, synthesized: bool = False) -> Panel:
     table = Table.grid(padding=(0, 2))
     table.add_column(style=_C_DIM, justify="right")
     table.add_column(style="white")
@@ -1108,8 +1108,12 @@ def _injection_matrix_panel(policy, source: str) -> Panel:
     table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
     table.add_row(
         "injection matrix",
-        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] declared "
-        "injectable surface(s)",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered candidate parameter(s)"
+            if synthesized
+            else "declared injectable surface(s)"
+        ),
     )
 
     rules = Table.grid(padding=(0, 2))
@@ -1130,19 +1134,29 @@ def _injection_matrix_panel(policy, source: str) -> Panel:
         )
 
     note = Text(
-        "\nGround truth only. Each surface is proven by a THREE-WAY BOOLEAN "
-        "differential on the live target: a benign BASELINE probe (which must "
+        (
+            "\nAuto-discovered candidates — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by a THREE-WAY BOOLEAN "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by a THREE-WAY BOOLEAN "
+        )
+        + "differential on the live target: a benign BASELINE probe (which must "
         "return a legitimate response — the anchor), plus length-matched "
         "(TRUE, FALSE) payload pairs. Because each pair differs by a single "
         "digit, a reflected payload contributes identical bytes to both arms — "
         "so any TRUE≠FALSE difference can only come from the backend evaluating "
-        "the injected boolean. A bare status code is never the verdict.",
+        "the injected boolean. A parameter the backend ignores collapses "
+        "(TRUE == FALSE) → DISPROVED. A bare status code is never the verdict.",
         style=_C_DIM,
     )
 
     return Panel(
         Group(table, Rule(style=_C_DIM), rules, note),
-        title=f"[{_C_ACCENT}]▐ SQL-INJECTION MATRIX ORACLE[/{_C_ACCENT}]",
+        title=(
+            f"[{_C_ACCENT}]▐ SQL-INJECTION · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ SQL-INJECTION MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
         border_style=_C_ACCENT,
         padding=(1, 2),
     )
@@ -1317,7 +1331,23 @@ def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     return target, max_cycles, policy_path, source_root
 
 
-def run(arg):
+def run(arg, *, discover_mode=False):
+    """
+    Run the autonomous research + prove loop against a live target.
+
+    ``discover_mode`` flips Sentinel from an operator-oracle *verifier* into a
+    *discoverer* for the one class whose ground truth is internal — SQL
+    injection. When set and no operator ``injection_matrix`` is supplied, the
+    injectable surface is SYNTHESIZED from live reconnaissance (observed query
+    parameters + a fixed, target-agnostic generic-parameter list on query-
+    surface endpoints) via
+    :func:`app.security_graph.injection.discover.synthesize_injection_policy`,
+    and every synthesized candidate is decided by the SAME pure boolean-
+    differential judge. No verdict is manufactured: a parameter the backend
+    ignores collapses (TRUE == FALSE) → DISPROVED → no finding. The header and
+    cookie passes already run zero-config off the secure baseline, so a bare URL
+    yields real, proven discovery across three classes.
+    """
     if not arg or not arg.strip():
         console.print(
             f"[{_C_BAD}]Usage:[/{_C_BAD}] investigate <target> [cycles] "
@@ -1354,7 +1384,24 @@ def run(arg):
     console.print()
     console.print(_banner())
 
-    # Load the operator-supplied access-policy oracle, if any. A bad
+    if discover_mode:
+        console.print(
+            Panel(
+                Text(
+                    "DISCOVER MODE — no operator oracle required. Point Sentinel "
+                    "at a URL and it derives its own injectable surface from live "
+                    "reconnaissance, then proves every candidate with the same "
+                    "pure boolean differential. Header + cookie posture already "
+                    "run off the built-in secure baseline. Nothing is "
+                    "manufactured: an ignored parameter collapses to DISPROVED.",
+                    style=_C_DIM,
+                ),
+                title=f"[bold {_C_ACCENT}]▐ ZERO-ORACLE DISCOVERY[/bold {_C_ACCENT}]",
+                border_style=_C_ACCENT,
+                padding=(0, 2),
+            )
+        )
+
     # policy fails loud rather than silently running without it.
     access_policy = None
     if policy_path:
@@ -1943,6 +1990,27 @@ def run(arg):
             )
             injection_policy = None
 
+    # DISCOVER MODE: with no operator-declared matrix, SYNTHESIZE the injectable
+    # surface from live recon. This is honest because injection's ground truth is
+    # internal — the boolean differential is self-anchoring, so the operator only
+    # ever needed to supply *where to look*, which recon observed for us. Every
+    # synthesized candidate is decided by the SAME pure judge below; an ignored
+    # parameter collapses to DISPROVED and never becomes a finding.
+    injection_synthesized = False
+    if (
+        discover_mode
+        and (injection_policy is None or not injection_policy.checks)
+    ):
+        from app.security_graph.injection.discover import (
+            synthesize_injection_policy,
+        )
+
+        discovery = synthesize_injection_policy(result.graph)
+        if discovery.policy.checks:
+            injection_policy = discovery.policy
+            injection_source = f"synthesized · live-recon ({discovery.note})"
+            injection_synthesized = True
+
     if injection_policy is not None and injection_policy.checks:
         console.print()
         console.print(
@@ -1952,7 +2020,13 @@ def run(arg):
                 style=_C_ACCENT,
             )
         )
-        console.print(_injection_matrix_panel(injection_policy, injection_source))
+        console.print(
+            _injection_matrix_panel(
+                injection_policy,
+                injection_source,
+                synthesized=injection_synthesized,
+            )
+        )
         try:
             from app.security_graph.injection import run_injection_investigation
 

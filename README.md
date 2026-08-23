@@ -54,6 +54,23 @@ At the `Sentinel > ` prompt:
 investigate http://127.0.0.1:3000 12 samples/juice_shop_access_policy.json
 ```
 
+## Zero-oracle discovery (just a URL)
+
+No policy file? Point Sentinel at a bare URL and let it **discover** the bugs:
+
+```bash
+discover http://127.0.0.1:3000
+```
+
+Header and cookie posture run off a built-in secure baseline; the SQL-injection
+surface is **synthesized from live recon** — observed query parameters, API routes
+mined from the app's own JavaScript (template-literal routes included), and a
+target-agnostic generic-parameter sweep across query surfaces. Every synthesized
+candidate is gated by the *same* pure boolean-differential judge, so discovery
+decides only *where to look*, never the verdict — nothing is manufactured. Proven
+live vs Juice Shop: `q` on `/rest/products/search` `CONFIRMED` → `FIX PROVEN`
+from a URL alone.
+
 ## Login Tester (opt-in)
 
 Turn anonymous scanning into **authenticated** reasoning. Sentinel drives a real

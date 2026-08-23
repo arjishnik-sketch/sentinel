@@ -36,6 +36,14 @@ investigate http://127.0.0.1:3000 12 samples/juice_shop_access_policy.json
 
 Watch the decision board carry a live target through the full loop: recon → hypotheses → adaptive cycles → a `CONFIRMED` broken-access-control finding → a `FIX PROVEN` remediation (the shield denies the anonymous caller `403` under the same judge). Type `exit` to leave. Everything below explains each piece in depth.
 
+Or point Sentinel at a URL with **no policy file at all** and let it discover the bugs:
+
+```bash
+discover http://127.0.0.1:3000
+```
+
+Discover mode runs header + cookie posture off the built-in secure baseline and **synthesizes the SQL-injection surface from live recon** (see [Zero-oracle discovery](#zero-oracle-discovery-discover-url)); every candidate is still gated by the same pure judge, so nothing is manufactured.
+
 ---
 
 ## What Sentinel is / what it is NOT
@@ -386,6 +394,58 @@ request-guard (WAF-style) virtual patch.
 
 ---
 
+## Zero-oracle discovery (`discover <url>`)
+
+`discover <target>` is the answer to *"can Sentinel find bugs on its own, with
+nothing but a URL?"* — **yes, honestly, for the classes whose ground truth is
+internal**, and without weakening the no-manufacturing contract by a single
+inch. It is the same engine as `investigate`, run in *discover mode*:
+
+- **Header + cookie posture** already need no operator: they run off Sentinel's
+  built-in **secure baseline**, so a bare URL proves those two classes as-is.
+- **SQL injection is the flagship discoverable class.** Its ground truth is
+  *internal* — the three-way boolean differential is *self-anchoring* (a benign
+  baseline plus length-matched TRUE/FALSE pairs). The operator therefore never
+  had to supply *intent*, only *where to look* — and reconnaissance observed that
+  for us. In discover mode the injectable surface is **synthesized from live
+  recon** by [`app/security_graph/injection/discover.py`](app/security_graph/injection/discover.py):
+    - every query parameter recon actually saw (anchored to the value the app
+      really served), **including API routes mined out of the target's own
+      JavaScript** — e.g. an Angular/SPA call built from a template literal like
+      `` `${host}/rest/products/search?q=${term}` `` is recovered and its `q`
+      becomes a candidate, which is how discovery reaches a JSON API's real query
+      surface; plus
+    - a small, fixed, **target-agnostic** list of conventional query parameters
+      (`q`, `query`, `search`, `id`, …) tried breadth-first across query-surface
+      endpoints (`/rest`, `/api`, `search`, …), so an injectable parameter that
+      never appears pre-populated in a link can still be surfaced.
+- **The same pure judge decides every synthesized candidate.** A parameter the
+  backend ignores collapses (`TRUE == FALSE`) → `DISPROVED` → no finding; a
+  baseline that isn't a legitimate response → `INCONCLUSIVE` → no finding.
+  Synthesis changes only *where to look*, never *how a verdict is reached* — the
+  engine holds no target-specific knowledge; host, routes, and parameters are all
+  discovered live.
+- **CONFIRMED injections flow into the same gated PATCH + PROVE** (show proposed
+  request-guard → take approval → prove `VALIDATED → DISPROVED`).
+
+Authorization and privilege-escalation *intent* cannot be inferred from a bare
+URL (who *should* be denied is a business fact, not an observable one), so those
+classes still require a declared matrix — pass one to `investigate`. Their attack
+surface is still surfaced by discover mode as honest research leads; they simply
+never cross into a *finding* without a declared rule to contradict.
+
+```
+discover http://127.0.0.1:3000
+```
+
+Live against the Juice Shop fixture this surfaces and **CONFIRMS the `q`
+parameter of `/rest/products/search`** (mined from the app's JavaScript, proven
+by the differential, then `FIX_PROVEN` via the request-guard) alongside the
+baseline header findings — with zero policy input, and every non-injectable
+candidate honestly `DISPROVED` / `INCONCLUSIVE`.
+
+---
+
 ## Reading the decision board
 
 `investigate` renders a sequence of Rich panels. Here is what each one means.
@@ -467,6 +527,7 @@ All commands are entered at the `Sentinel > ` prompt. The command word is split 
 | Command | Syntax | What it does |
 |---|---|---|
 | **investigate** | `investigate <target> [cycles] [access_policy.json] [source_repo_dir]` | **Primary.** Runs the full autonomous find → reason → prove → patch → prove loop (recon → hypotheses → adaptive cycles → CONFIRMED findings → PATCH + PROVE remediation) across all five classes and renders the decision board. `cycles` defaults to 10, clamped 1–100. An `access_policy.json` (or `$SENTINEL_ACCESS_POLICY`) supplies the ground-truth oracle the judge needs; the *same* file may carry a `header_rules` section (posture), a `cookie_rules` section (insecure cookies), a `privesc_matrix` section (privilege escalation), and an `injection_matrix` section (SQL injection) — or each may be supplied independently via `$SENTINEL_HEADER_POLICY` / `$SENTINEL_COOKIE_POLICY` / `$SENTINEL_PRIVESC_POLICY` / `$SENTINEL_INJECTION_POLICY`. Any section that is absent is simply skipped (no manufactured target). An existing directory (or `$SENTINEL_SOURCE_ROOT`) enables the optional root-cause source patch. Set `$SENTINEL_SKIP_REMEDIATION=1` to skip the remediation stage, `$SENTINEL_ASSUME_YES=1` to auto-approve the human-in-the-loop remediation gate (non-interactive). Empty arg prints usage. |
+| **discover** | `discover <target> [cycles]` | **Zero-oracle discovery — point Sentinel at a URL and it finds the bugs, no policy file.** Same engine as `investigate` in *discover mode*: header + cookie posture run off the built-in secure baseline, and the injectable surface for **SQL injection is SYNTHESIZED from live reconnaissance** — parameters observed on the surface (including API routes mined from the app's own JavaScript) plus a fixed, target-agnostic generic-parameter list on query-surface endpoints. Every synthesized candidate is still decided by the **same pure boolean-differential judge**, so nothing is manufactured: a parameter the backend ignores collapses (TRUE == FALSE) → DISPROVED → no finding. CONFIRMED injections flow into the same gated PATCH + PROVE. Authorization / privilege-escalation *intent* cannot be inferred from a bare URL, so those classes still need a declared matrix (pass one to `investigate`); their surface is still surfaced here as honest leads. See **Zero-oracle discovery** below. |
 | **login** | `login <target> [login_url] [cycles] [access_policy.json]` | **Authenticated reasoning (opt-in).** Drives a real browser, prompts for credentials (`getpass`), waits for you to finish login/MFA, auto-detects completion, captures the session, then runs authenticated authorization probes **and** insecure-cookie analysis on the *real* captured session cookies — followed by PATCH + PROVE for anything CONFIRMED. Requires the opt-in extra (`pip install -e ".[login]"` + `python -m playwright install chromium`); without it the command prints an actionable install hint. Credentials are held in memory for the run only — never persisted, never logged. See **The Login Tester** below. |
 | hunt | `hunt <target>` | Legacy recon+RAG pipeline. **Currently broken** (raises `NameError` in `core.py`); superseded by `investigate`. |
 | findings | `findings` | Prints the in-memory findings of the session's `SentinelCore`. Empty unless a prior `hunt` populated it — `investigate` uses a separate graph and does not fill it. |
@@ -519,7 +580,7 @@ If you point at a host not on the engagement scope, the executor refuses it befo
 ollama pull qwen3:4b
 ```
 
-**"No findings were CONFIRMED."** This is expected today (see below), not an error — it reflects Sentinel's refusal to call an HTTP status a finding.
+**"No findings were CONFIRMED."** Not an error — it reflects Sentinel's refusal to call an HTTP status a finding. It happens when nothing the judge probed contradicted its ground truth: with an oracle, every declared expectation held; in `discover` mode, the synthesized injectable surface all collapsed to `DISPROVED` and the headers/cookies met the secure baseline. A clean target legitimately produces no findings.
 
 **Trying to run from Windows fails.** The `.venv` is Linux-native. Run under WSL/Linux via `./sentinel`.
 
@@ -605,15 +666,35 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
   principal, no operator decision rewritten) plus insecure-cookie analysis on the
   *real* captured session cookies. Credentials are never persisted or logged.
 
+**Zero-oracle discovery — URL-only, no operator file:**
+
+- `discover <url>` runs the *same* engine with **no policy input at all**. Header
+  and cookie posture run off the built-in secure `baseline.py`; the SQL-injection
+  surface is **synthesized from live recon** (`injection/discover.py`) — observed
+  query parameters (including API routes mined from the app's own JavaScript, with
+  template-literal `${…}` interpolation collapsed to recover the static path) plus
+  a fixed, target-agnostic generic-parameter list tried breadth-first across query
+  surfaces. Every synthesized candidate is still gated by the *same* pure boolean
+  differential judge, so a parameter that does not track the injected boolean
+  collapses to `DISPROVED`/no finding — discovery decides only *where to look*,
+  never the verdict. Proven live vs Juice Shop with a bare URL: `q` on
+  `/rest/products/search` `CONFIRMED` → `FIX_PROVEN`, alongside baseline header
+  findings, with every non-injectable candidate honestly `DISPROVED`/`INCONCLUSIVE`.
+  Authorization / privilege-escalation still need intent (a policy can't be
+  inferred from a URL), so discover mode surfaces those as honest research leads.
+  See **Zero-oracle discovery** above.
+
 **Validation — a deterministic, network-free test suite:**
 
-- **122** tests cover the five pure judges, the seeders, the enforcer's mutation
+- **136** tests cover the five pure judges, the seeders, the enforcer's mutation
   primitives (header / cookie rewrite, access-control denial, request-guard SQLi
-  block), and full offline FIND→CONFIRM→FIX_PROVEN flows with isolation checks
-  across all five classes (plus a live headless-browser capture gated behind an
-  env var). They run with **no network** — every verdict is reproduced by the pure
-  judge against a canned oracle — so the epistemic contract itself is regression-
-  tested: `122 passed, 1 skipped` by default.
+  block), full offline FIND→CONFIRM→FIX_PROVEN flows with isolation checks
+  across all five classes, and **zero-oracle discovery** (injectable-surface
+  synthesis from live recon, plus JS route mining with template-literal recovery)
+  — all gated by the *same* pure judges (plus a live headless-browser capture gated
+  behind an env var). They run with **no network** — every verdict is reproduced by
+  the pure judge against a canned oracle — so the epistemic contract itself is
+  regression-tested: `136 passed, 1 skipped` by default.
 
 **Target-agnostic — proven on two independent live targets:**
 
@@ -643,7 +724,12 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
    *ingredients* of a chain** for one session, surfaced together under one session
    context. Auto-composing the causal narrative from those ingredients is the
    honest remaining frontier and is deliberately *not* manufactured today.
-2. Wire policy-violation hypotheses from differential signals discovered live, not only from the declared oracle.
+2. Extend zero-oracle discovery beyond the self-grounding classes — infer
+   authorization / privilege-escalation *intent* from live differential signals
+   (not only the declared oracle), so `discover <url>` can raise those classes too
+   without an operator file. Injection already discovers its full surface live; the
+   header/cookie baseline runs zero-config; authz/privesc remain the honest
+   frontier because intent cannot yet be inferred from a URL alone.
 3. Housekeeping: fix the broken legacy `hunt` and implement the `resume`/`report` stubs. (The `README.md` points at `./sentinel` and this guide.)
 
 Demo Sentinel as **autonomous, evidence-driven authorization research with bounded AI that closes the full find → prove → patch → prove loop live** — every verdict traceable to the deterministic judge, never to a status code or the LLM.

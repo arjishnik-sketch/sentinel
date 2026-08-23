@@ -89,9 +89,23 @@ def _materialize_javascript_api_observations(
                 if not route:
                     continue
 
-                # Ignore interpolation/template-only values.
+                # Recover the STATIC path skeleton from a template literal.
+                # SPA bundles routinely build an API URL by interpolating a host
+                # prefix and/or a parameter value into one template literal, e.g.
+                # `${this.hostServer}/rest/products/search?q=${term}`. Dropping
+                # every interpolated string would blind recon to exactly these
+                # real endpoints, so instead collapse the `${...}` / `{{...}}`
+                # tokens and keep the surrounding literal segments. The result
+                # still passes through every same-origin / leading-slash / asset
+                # guard below, and any bogus remainder simply yields no endpoint
+                # of consequence downstream (every class judges what it probes).
                 if "${" in route or "{{" in route:
-                    continue
+                    route = re.sub(r"\$\{[^{}]*\}", "", route)
+                    route = re.sub(r"\{\{[^{}]*\}\}", "", route)
+                    route = route.strip()
+                    # A residual unbalanced interpolation is unusable — skip it.
+                    if not route or "${" in route or "{{" in route:
+                        continue
 
                 # Ignore protocol-relative external references.
                 if route.startswith("//"):
