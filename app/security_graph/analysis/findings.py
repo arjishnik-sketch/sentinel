@@ -12,6 +12,7 @@ _SEVERITY_BY_KIND = {
     "authorization_policy_violation": "HIGH",
     "security_misconfiguration": "MEDIUM",
     "insecure_cookie": "MEDIUM",
+    "privilege_escalation": "HIGH",
 }
 _DEFAULT_SEVERITY = "HIGH"
 

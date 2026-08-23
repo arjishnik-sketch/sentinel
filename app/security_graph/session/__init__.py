@@ -17,6 +17,7 @@ from .browser_login import (
 )
 from .authenticated import (
     authenticated_policy,
+    privesc_policy_from_sessions,
     session_baseline_cookie_policy,
     session_headers,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "is_authenticated_signal",
     "reconstruct_set_cookie",
     "authenticated_policy",
+    "privesc_policy_from_sessions",
     "session_baseline_cookie_policy",
     "session_headers",
 ]

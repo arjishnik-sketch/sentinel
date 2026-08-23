@@ -202,6 +202,17 @@ class TargetResearchPipeline:
             )
         )
 
+        # The privilege-escalation (login-matrix) class reuses the same HTTP
+        # fact executor under its own kind, so the engine can dispatch the
+        # control/breach probes with no shared interpretation.
+        from ..privesc.executor import PrivEscProbeExecutor
+
+        registry.register(
+            PrivEscProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

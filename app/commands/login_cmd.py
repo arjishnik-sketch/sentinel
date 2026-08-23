@@ -45,6 +45,10 @@ from .investigate_cmd import (
     _remediation_panel,
     _cookie_findings_panel,
     _cookie_remediation_panel,
+    _privesc_matrix_panel,
+    _privesc_findings_panel,
+    _privesc_remediation_panel,
+    _gate_remediation,
 )
 
 
@@ -155,10 +159,11 @@ def _session_panel(session, target: str, login_url: str | None) -> Panel:
     )
 
 
-def _chain_panel(authz_confirmed, cookie_confirmed) -> Panel:
+def _chain_panel(authz_confirmed, cookie_confirmed, privesc_confirmed=()) -> Panel:
     """Honest chaining view: co-occurring proven ingredients for one session."""
     have_authz = bool(authz_confirmed)
     have_cookie = bool(cookie_confirmed)
+    have_privesc = bool(privesc_confirmed)
 
     def _mark(ok: bool) -> str:
         return f"[{_C_OK}]✔[/{_C_OK}]" if ok else f"[{_C_DIM}]·[/{_C_DIM}]"
@@ -170,15 +175,21 @@ def _chain_panel(authz_confirmed, cookie_confirmed) -> Panel:
         f"{_mark(have_authz)} resource reachable as this authenticated principal "
         f"[{_C_DIM}]({len(authz_confirmed)} authorization_policy_violation "
         f"CONFIRMED)[/{_C_DIM}]",
+        f"{_mark(have_privesc)} privilege boundary crossed by this live session "
+        f"[{_C_DIM}]({len(privesc_confirmed)} privilege_escalation "
+        f"CONFIRMED)[/{_C_DIM}]",
     ]
     body = Text.from_markup("\n".join(lines))
 
-    if have_authz and have_cookie:
+    proven_count = sum((have_authz, have_cookie, have_privesc))
+    if proven_count >= 2:
         verdict = Text(
-            "\nBoth ingredients of a session-theft → authenticated-access chain "
-            "are independently PROVEN on this session. Sentinel presents them "
-            "as co-occurring evidence; it does NOT auto-compose a causal exploit "
-            "narrative — full chaining remains the honestly-labeled frontier.",
+            "\nMultiple independently-PROVEN ingredients co-occur on this one "
+            "session — the raw material of a real attack chain (weak session "
+            "cookie → session theft → authenticated access → privilege "
+            "escalation). Sentinel presents them as co-occurring evidence; it "
+            "does NOT auto-compose a causal exploit narrative — full chaining "
+            "remains the honestly-labeled frontier.",
             style=_C_WARN,
         )
     else:
@@ -298,6 +309,8 @@ def run(arg):
             f"[/dim]\n"
             f"[dim]opens a real browser; log in + finish MFA, then Sentinel "
             f"auto-detects (or press Enter) and captures the session[/dim]\n"
+            f"[dim]a 'privesc_matrix' in the policy (or $SENTINEL_PRIVESC_POLICY) "
+            f"adds a 2-account horizontal/vertical privilege-escalation pass[/dim]\n"
             f"[dim]needs the opt-in extra: pip install -e \".[login]\" && "
             f"python -m playwright install chromium[/dim]"
         )
@@ -448,7 +461,11 @@ def run(arg):
             )
         )
         if authz_confirmed and not skip_remediation:
-            from app.security_graph.remediation import remediate_confirmed_findings
+            from app.security_graph.remediation import (
+                remediate_confirmed_findings,
+                synthesize_remediation,
+            )
+            from app.commands.remediation_gate import RemediationProposal
 
             console.print()
             console.print(
@@ -458,13 +475,39 @@ def run(arg):
                     style=_C_OK,
                 )
             )
-            with console.status(
-                f"[{_C_OK}]synthesizing controls + proving fixes live…[/{_C_OK}]",
-                spinner="dots",
+            # Show the proposed controls and take the operator's approval
+            # BEFORE any shield is stood up or any fix is proven.
+            proposals = []
+            for finding in authz_confirmed:
+                plan = synthesize_remediation(result.graph, finding)
+                if plan is None:
+                    control = "route-level deny (no shieldable plan derived)"
+                else:
+                    control = (
+                        f"deny {plan.rule.principal_name} → "
+                        f"{plan.rule.method} {plan.rule.path}"
+                    )
+                proposals.append(
+                    RemediationProposal(
+                        title=finding.title,
+                        severity=finding.severity,
+                        control=control,
+                    )
+                )
+
+            if _gate_remediation(
+                class_label="authenticated authorization",
+                color=_C_OK,
+                proposals=proposals,
             ):
-                authz_outcomes = remediate_confirmed_findings(result.graph)
-            for remediation in authz_outcomes:
-                console.print(_remediation_panel(remediation))
+                with console.status(
+                    f"[{_C_OK}]synthesizing controls + proving fixes live…"
+                    f"[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    authz_outcomes = remediate_confirmed_findings(result.graph)
+                for remediation in authz_outcomes:
+                    console.print(_remediation_panel(remediation))
     except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
         console.print(
             Panel(
@@ -482,9 +525,74 @@ def run(arg):
             reconstruct_set_cookie, session_baseline_cookie_policy,
         )
 
+    # --- PRIVILEGE ESCALATION (login matrix, Tier 2) ---------------------
+    # Only runs when the operator declares a login matrix (a `privesc_matrix`
+    # section or $SENTINEL_PRIVESC_POLICY). The account just captured is
+    # principal #0; any further declared principal triggers its own live login
+    # so its real session identity — never a file credential — drives the probe.
+    def _capture_additional(principal_label):
+        console.print()
+        console.print(
+            Text(
+                f"Log in as matrix principal '{principal_label}'. A browser "
+                "window opens; finish login + MFA, then press Enter here.",
+                style=_C_WARN,
+            )
+        )
+        try:
+            extra_user = console.input(
+                f"[{_C_PRIMARY}]{principal_label} username/email > "
+                f"[/{_C_PRIMARY}]"
+            ).strip()
+            extra_pass = getpass.getpass(f"{principal_label} password > ")
+        except (KeyboardInterrupt, EOFError):
+            console.print(
+                f"[{_C_DIM}]  capture cancelled for '{principal_label}'"
+                f"[/{_C_DIM}]"
+            )
+            return None
+        extra_done = _enter_watcher()
+        try:
+            extra_session = capture_session(
+                target,
+                username=extra_user,
+                password=extra_pass,
+                login_url=login_url,
+                manual_done=extra_done.is_set,
+                on_status=lambda m: console.print(
+                    f"[{_C_DIM}]  · {m}[/{_C_DIM}]"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=(
+                        f"[{_C_BAD}]login failed for '{principal_label}'"
+                        f"[/{_C_BAD}]"
+                    ),
+                    border_style=_C_BAD,
+                )
+            )
+            return None
+        finally:
+            extra_pass = None
+            del extra_pass
+        console.print(_session_panel(extra_session, target, login_url))
+        return extra_session
+
+    privesc_confirmed = []
+    if result is not None:
+        privesc_confirmed = _run_privesc_pass(
+            result.graph, target, session, policy_path, skip_remediation,
+            _capture_additional,
+        )
+
     # --- CHAINING (honest ingredients) -----------------------------------
     console.print()
-    console.print(_chain_panel(authz_confirmed, cookie_confirmed))
+    console.print(
+        _chain_panel(authz_confirmed, cookie_confirmed, privesc_confirmed)
+    )
     console.print()
 
 
@@ -556,6 +664,9 @@ def _run_cookie_pass(
             graph.findings_for(kind="insecure_cookie", status="OPEN")
         )
         if cookie_confirmed and not skip_remediation:
+            from app.security_graph.cookies import synthesize_cookie_remediation
+            from app.commands.remediation_gate import RemediationProposal
+
             console.print()
             console.print(
                 Rule(
@@ -564,21 +675,194 @@ def _run_cookie_pass(
                     style=_C_OK,
                 )
             )
-            with console.status(
-                f"[{_C_OK}]hardening the observed cookie + proving…[/{_C_OK}]",
-                spinner="dots",
-            ):
-                cookie_outcomes = _prove_session_cookies(
-                    graph, cookie_confirmed, observed_lines
+            proposals = []
+            for finding in cookie_confirmed:
+                plan = synthesize_cookie_remediation(graph, finding)
+                if plan is None:
+                    control = "Set-Cookie hardening (no plan derived)"
+                else:
+                    detail = plan.rule.flag or plan.rule.value
+                    name = plan.rule.cookie_name or "every Set-Cookie"
+                    control = (
+                        f"{plan.rule.op} {detail} on '{name}'  "
+                        f"({plan.rule.method} {plan.rule.path})"
+                    )
+                proposals.append(
+                    RemediationProposal(
+                        title=finding.title,
+                        severity=finding.severity,
+                        control=control,
+                    )
                 )
-            for remediation in cookie_outcomes:
-                console.print(_cookie_remediation_panel(remediation))
+
+            if _gate_remediation(
+                class_label="insecure cookies",
+                color=_C_OK,
+                proposals=proposals,
+            ):
+                with console.status(
+                    f"[{_C_OK}]hardening the observed cookie + proving…"
+                    f"[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    cookie_outcomes = _prove_session_cookies(
+                        graph, cookie_confirmed, observed_lines
+                    )
+                for remediation in cookie_outcomes:
+                    console.print(_cookie_remediation_panel(remediation))
         return cookie_confirmed
     except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
         console.print(
             Panel(
                 Text(str(exc), style=_C_BAD),
                 title=f"[{_C_BAD}]insecure cookie stage failed[/{_C_BAD}]",
+                border_style=_C_BAD,
+            )
+        )
+        return []
+
+
+def _load_privesc_matrix(policy_path):
+    """
+    Resolve an operator LOGIN MATRIX (structure only — never credentials).
+
+    Source order: ``$SENTINEL_PRIVESC_POLICY`` (a dedicated matrix file), else a
+    ``privesc_matrix`` section embedded in the access-policy file. Returns
+    ``(policy_or_None, source_or_None)``; a file with no matrix yields
+    ``(None, None)`` and the privilege-escalation pass is simply not requested.
+    """
+    import json
+
+    from app.security_graph.privesc import load_privesc_policy
+
+    source = os.environ.get("SENTINEL_PRIVESC_POLICY") or None
+    if source is None and policy_path:
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("privesc_matrix"):
+                source = policy_path
+        except Exception:  # noqa: BLE001 — a bad file is reported elsewhere
+            source = None
+    if not source:
+        return None, None
+    return load_privesc_policy(source), source
+
+
+def _run_privesc_pass(
+    graph, target, first_session, policy_path, skip_remediation, capture_more,
+):
+    """
+    Tier-2 authenticated class: prove horizontal/vertical privilege escalation
+    across a live LOGIN MATRIX.
+
+    The matrix declares only STRUCTURE — the accounts, the control endpoint each
+    legitimately owns, and the boundaries an attacker MUST NOT cross. Every
+    session identity is supplied from a REAL browser login (never a file): the
+    account just used is principal #0, and when the matrix declares further
+    principals the operator is prompted to log in as each. A three-probe
+    (control + breach + anonymous baseline) differential means a bare status
+    code is never the verdict; a principal with no live session goes
+    INCONCLUSIVE — never a manufactured finding. Returns the CONFIRMED
+    escalation findings.
+    """
+    from app.security_graph.session import privesc_policy_from_sessions
+
+    matrix, source = _load_privesc_matrix(policy_path)
+    if matrix is None or not matrix.checks:
+        return []
+
+    console.print()
+    console.print(
+        Rule(
+            f"[bold {_C_ACCENT}]PRIVILEGE ESCALATION · "
+            f"LOGIN MATRIX[/bold {_C_ACCENT}]",
+            style=_C_ACCENT,
+        )
+    )
+    console.print(_privesc_matrix_panel(matrix, source))
+
+    # Bind live sessions to declared principals in order: the account already
+    # captured is principal #0; capture one live session per additional declared
+    # principal. A credential is never read from the matrix file.
+    sessions = [first_session]
+    for principal in matrix.principals[1:]:
+        extra = capture_more(principal.name)
+        sessions.append(extra)  # None (operator cancelled) → INCONCLUSIVE
+
+    live_matrix = privesc_policy_from_sessions(matrix, sessions)
+
+    try:
+        from app.security_graph.privesc import run_privesc_investigation
+
+        with console.status(
+            f"[{_C_ACCENT}]running control+breach differential + judging "
+            f"live…[/{_C_ACCENT}]",
+            spinner="dots",
+        ):
+            privesc_results = run_privesc_investigation(
+                graph, live_matrix, target_base=target
+            )
+        if privesc_results:
+            console.print(_privesc_findings_panel(privesc_results))
+
+        privesc_confirmed = list(
+            graph.findings_for(kind="privilege_escalation", status="OPEN")
+        )
+        if privesc_confirmed and not skip_remediation:
+            from app.security_graph.privesc import (
+                remediate_privesc_findings,
+                synthesize_privesc_remediation,
+            )
+            from app.commands.remediation_gate import RemediationProposal
+
+            console.print()
+            console.print(
+                Rule(
+                    f"[bold {_C_OK}]PRIVESC REMEDIATION · PATCH + PROVE · "
+                    f"{len(privesc_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                    style=_C_OK,
+                )
+            )
+            proposals = []
+            for finding in privesc_confirmed:
+                plan = synthesize_privesc_remediation(graph, finding)
+                if plan is None:
+                    control = "deny escalation (no plan derived)"
+                else:
+                    control = (
+                        f"deny {plan.rule.attacker_name} → "
+                        f"{plan.rule.method} {plan.rule.path}  "
+                        f"({plan.rule.type})"
+                    )
+                proposals.append(
+                    RemediationProposal(
+                        title=finding.title,
+                        severity=finding.severity,
+                        control=control,
+                    )
+                )
+            if _gate_remediation(
+                class_label="privilege escalation",
+                color=_C_OK,
+                proposals=proposals,
+            ):
+                with console.status(
+                    f"[{_C_OK}]standing up the shield + proving the boundary "
+                    f"holds…[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    privesc_outcomes = remediate_privesc_findings(graph)
+                for remediation in privesc_outcomes:
+                    console.print(_privesc_remediation_panel(remediation))
+        return privesc_confirmed
+    except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+        console.print(
+            Panel(
+                Text(str(exc), style=_C_BAD),
+                title=(
+                    f"[{_C_BAD}]privilege escalation stage failed[/{_C_BAD}]"
+                ),
                 border_style=_C_BAD,
             )
         )

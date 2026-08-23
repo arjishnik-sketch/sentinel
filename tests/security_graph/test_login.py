@@ -26,6 +26,7 @@ from app.security_graph.session import (
     authenticated_policy,
     cookie_header_from,
     is_authenticated_signal,
+    privesc_policy_from_sessions,
     reconstruct_set_cookie,
     session_baseline_cookie_policy,
     session_headers,
@@ -154,6 +155,91 @@ def test_baseline_targets_only_session_like_cookies():
 def test_baseline_empty_when_no_session_cookie():
     session = _session(CapturedCookie("language", "en"))
     assert session_baseline_cookie_policy(session) == {"cookie_rules": []}
+
+
+# --- pure: bind LIVE logins to an operator login-matrix (by index) ----------
+
+def _structure_only_matrix():
+    """A login matrix that declares STRUCTURE only — no credentials in the file.
+
+    Each principal owns a control endpoint it legitimately reaches; the check
+    declares the boundary the attacker must not cross. No headers/tokens are
+    ever written here — those arrive from a live browser login at run time.
+    """
+    from app.security_graph.privesc import parse_privesc_policy
+
+    return parse_privesc_policy(
+        {
+            "privesc_matrix": {
+                "principals": [
+                    {"name": "alice",
+                     "control": {"method": "GET", "path": "/rest/basket/1"},
+                     "role": "user"},
+                    {"name": "bob",
+                     "control": {"method": "GET", "path": "/rest/basket/2"},
+                     "role": "user"},
+                ],
+                "checks": [
+                    {"type": "horizontal", "attacker": "alice", "victim": "bob",
+                     "breach": {"method": "GET", "path": "/rest/basket/2"},
+                     "severity": "HIGH"},
+                ],
+            }
+        }
+    )
+
+
+def test_privesc_sessions_bind_headers_by_index():
+    matrix = _structure_only_matrix()
+    # Structure-only: the operator declared no credentials in the file.
+    assert all(p.headers == () for p in matrix.principals)
+
+    alice = _session(CapturedCookie("token", "AAA"), bearer="alice.jwt")
+    bob = _session(CapturedCookie("token", "BBB"), bearer="bob.jwt")
+
+    live = privesc_policy_from_sessions(matrix, [alice, bob])
+
+    a, b = live.principals
+    assert dict(a.headers)["Cookie"] == "token=AAA"
+    assert dict(a.headers)["Authorization"] == "Bearer alice.jwt"
+    assert dict(b.headers)["Cookie"] == "token=BBB"
+    assert dict(b.headers)["Authorization"] == "Bearer bob.jwt"
+
+    # STRUCTURE is never rewritten — only the identity headers change.
+    assert [p.control_path for p in live.principals] == \
+        [p.control_path for p in matrix.principals]
+    assert [p.control_method for p in live.principals] == \
+        [p.control_method for p in matrix.principals]
+    assert live.checks == matrix.checks
+    # The builder is PURE: the operator's source policy is left untouched.
+    assert all(p.headers == () for p in matrix.principals)
+
+
+def test_privesc_missing_session_keeps_declared_headers_for_inconclusive():
+    # bob's login was skipped / failed -> None. His control probe then cannot
+    # succeed, so the two-probe judge returns INCONCLUSIVE and NO finding is
+    # manufactured. The builder must NOT invent headers for him.
+    matrix = _structure_only_matrix()
+    alice = _session(CapturedCookie("token", "AAA"), bearer="alice.jwt")
+
+    live = privesc_policy_from_sessions(matrix, [alice, None])
+
+    a, b = live.principals
+    assert dict(a.headers)["Cookie"] == "token=AAA"
+    assert b.headers == ()  # declared (empty) headers preserved verbatim
+
+
+def test_privesc_fewer_sessions_than_principals_leaves_tail_declared():
+    # Fewer captured sessions than declared principals: the unbound tail keeps
+    # its declared (empty) headers rather than borrowing another account's.
+    matrix = _structure_only_matrix()
+    alice = _session(CapturedCookie("token", "AAA"))
+
+    live = privesc_policy_from_sessions(matrix, [alice])
+
+    a, b = live.principals
+    assert dict(a.headers)["Cookie"] == "token=AAA"
+    assert b.headers == ()
 
 
 # --- end-to-end (browser-free): captured weak cookie → CONFIRMED → PROVEN ---

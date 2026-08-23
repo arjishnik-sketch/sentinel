@@ -20,7 +20,10 @@ Pure, browser-free, unit-testable. Two builders:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..policy.access_policy import AccessPolicy, PolicyPrincipal
+from ..privesc.privesc_policy import PrivEscPolicy
 from .browser_login import SESSION_COOKIE_NAMES, CapturedSession
 
 
@@ -137,3 +140,37 @@ def session_baseline_cookie_policy(
             }
         ]
     }
+
+
+def privesc_policy_from_sessions(
+    policy: PrivEscPolicy,
+    sessions: list[CapturedSession | None],
+) -> PrivEscPolicy:
+    """
+    Bind LIVE captured sessions to an operator login-matrix policy.
+
+    ``sessions[i]`` supplies the identifying request headers (``Cookie`` +
+    optional bearer) for ``policy.principals[i]`` — so the first account the
+    operator logged in as is principal #0, the second is principal #1, and so
+    on. The matrix declares only *structure* (which accounts exist, the control
+    endpoint each legitimately owns, and the boundaries an attacker must not
+    cross); every credential is supplied here from a real browser login, so no
+    token is ever read from or written to a policy file.
+
+    A principal with no captured session keeps its declared (typically empty)
+    headers. That is the honest failure mode: its control probe cannot succeed,
+    so the three-probe judge returns INCONCLUSIVE and no finding is manufactured.
+    Declared control/breach paths and check directions are never rewritten — the
+    deterministic judge still decides every verdict from the live differential.
+    """
+    principals = []
+    for index, principal in enumerate(policy.principals):
+        session = sessions[index] if index < len(sessions) else None
+        if session is not None:
+            principals.append(
+                replace(principal, headers=session_headers(session))
+            )
+        else:
+            principals.append(principal)
+
+    return replace(policy, principals=tuple(principals))

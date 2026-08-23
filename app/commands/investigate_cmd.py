@@ -50,6 +50,45 @@ def _endpoint_from_id(identifier: str) -> str:
     return identifier or ""
 
 
+class _Deferred(Exception):
+    """Internal signal: the operator declined this class's deploy (skip it)."""
+
+
+def _gate_remediation(*, class_label, color, proposals):
+    """
+    Human-in-the-loop deploy gate for one vulnerability class.
+
+    Renders the proposed corrective controls (already synthesized, purely) and
+    takes the operator's explicit approval BEFORE any enforcement shield is
+    stood up or any fix is proven. Returns True iff the operator approved (or
+    the run is pre-authorized via $SENTINEL_ASSUME_YES / non-interactive rules
+    in :mod:`app.commands.remediation_gate`). On decline a deferred panel is
+    shown and the deployable artifacts remain available to the operator.
+    """
+    from app.commands.remediation_gate import (
+        confirm_deploy,
+        deferred_panel,
+        proposed_remediation_panel,
+    )
+
+    console.print(
+        proposed_remediation_panel(
+            class_label=class_label,
+            color=color,
+            proposals=proposals,
+        )
+    )
+    approved, reason = confirm_deploy(
+        console,
+        class_label=class_label,
+        count=len(proposals),
+        color=color,
+    )
+    if not approved:
+        console.print(deferred_panel(class_label=class_label, reason=reason))
+    return approved
+
+
 def _banner() -> Panel:
     art = Text()
     art.append("SENTINEL", style=f"bold {_C_PRIMARY}")
@@ -850,6 +889,217 @@ def _cookie_remediation_panel(outcome) -> Panel:
     )
 
 
+def _privesc_matrix_panel(policy, source: str) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "login matrix",
+        f"[{_C_ACCENT}]{len(policy.principals)}[/{_C_ACCENT}] account(s) · "
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] declared boundary(ies)",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        counterparty = (
+            f"{check.victim}'s object"
+            if check.type == "horizontal"
+            else "elevated function"
+        )
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[white]{check.attacker}[/white] "
+            f"[{_C_DIM}]MUST NOT reach {counterparty} ·[/{_C_DIM}] "
+            f"[{_C_DIM}]{check.type} · {check.breach_method} "
+            f"{_short(check.breach_path, 32)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        "\nGround truth only. Each boundary is proven by a THREE-PROBE "
+        "differential on the live target: the attacker's control probe (its "
+        "OWN object) MUST succeed, the breach probe MUST be granted, AND an "
+        "anonymous caller MUST be denied that same route before an escalation "
+        "is CONFIRMED. The control rules out a dead session; the anonymous "
+        "baseline rules out a public route. A bare status code is never the "
+        "verdict.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ PRIVILEGE-ESCALATION MATRIX ORACLE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _privesc_findings_panel(results) -> Panel:
+    """Render every privilege-escalation verdict, including DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("control", justify="right")
+    table.add_column("breach", justify="right")
+    table.add_column("anon", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ boundary holds",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        control_code = (
+            probe.control_status_code
+            if probe.control_status_code is not None
+            else "—"
+        )
+        breach_code = (
+            probe.breach_status_code
+            if probe.breach_status_code is not None
+            else "—"
+        )
+        baseline_code = (
+            probe.baseline_status_code
+            if probe.baseline_status_code is not None
+            else "—"
+        )
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{control_code}[/white]",
+            f"[white]{breach_code}[/white]",
+            f"[{_C_DIM}]{baseline_code}[/{_C_DIM}]",
+            _short(probe.reason, 44),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} privilege boundary(ies) provably crossed by a live "
+        f"session (control succeeded + breach granted + anonymous caller "
+        f"denied) and CONFIRMED; a held boundary, a dead control session, or a "
+        f"route open to anonymous callers yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ PRIVILEGE ESCALATION · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _privesc_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed escalation finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]DENY[/bold {_C_BAD}] "
+            f"[white]{rule.attacker_name}[/white] "
+            f"[{_C_DIM}]({rule.type})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 34)}[/white]",
+        )
+        table.add_row(
+            "keeps alive",
+            f"[{_C_DIM}]attacker's own control · "
+            f"{plan.control_method} {_short(plan.control_url, 44)}[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · caddy · envoy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ PRIVESC REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -886,6 +1136,8 @@ def run(arg):
             f"the same file, or via $SENTINEL_HEADER_POLICY[/dim]\n"
             f"[dim]insecure-cookie rules live in a 'cookie_rules' section of "
             f"the same file, or via $SENTINEL_COOKIE_POLICY[/dim]\n"
+            f"[dim]privilege-escalation (login matrix) lives in a "
+            f"'privesc_matrix' section, or via $SENTINEL_PRIVESC_POLICY[/dim]\n"
             f"[dim]with no policy, header + cookie passes run off a built-in "
             f"secure baseline; set $SENTINEL_NO_BASELINE=1 to disable it[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
@@ -998,20 +1250,51 @@ def run(arg):
                 )
             )
         try:
+            from app.commands.remediation_gate import RemediationProposal
+            from app.security_graph.remediation import (
+                remediate_confirmed_findings,
+                synthesize_remediation,
+            )
+
+            # Show the proposed controls and take the operator's approval
+            # BEFORE any shield is stood up or any fix is proven.
+            proposals = []
+            for finding in confirmed:
+                plan = synthesize_remediation(result.graph, finding)
+                if plan is None:
+                    control = "route-level deny (no shieldable plan derived)"
+                else:
+                    control = (
+                        f"deny {plan.rule.principal_name} → "
+                        f"{plan.rule.method} {plan.rule.path}"
+                    )
+                proposals.append(
+                    RemediationProposal(
+                        title=finding.title,
+                        severity=finding.severity,
+                        control=control,
+                    )
+                )
+
+            if not _gate_remediation(
+                class_label="authorization",
+                color=_C_OK,
+                proposals=proposals,
+            ):
+                raise _Deferred()
+
             with console.status(
                 f"[{_C_OK}]synthesizing controls + proving fixes live…"
                 f"[/{_C_OK}]",
                 spinner="dots",
             ):
-                from app.security_graph.remediation import (
-                    remediate_confirmed_findings,
-                )
-
                 outcomes = remediate_confirmed_findings(
                     result.graph, source_root=source_root
                 )
             for remediation in outcomes:
                 console.print(_remediation_panel(remediation))
+        except _Deferred:
+            pass
         except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
             console.print(
                 Panel(
@@ -1106,16 +1389,43 @@ def run(arg):
                 )
                 from app.security_graph.posture import (
                     remediate_header_findings,
+                    synthesize_header_remediation,
                 )
+                from app.commands.remediation_gate import RemediationProposal
 
-                with console.status(
-                    f"[{_C_OK}]injecting corrective headers + proving live…"
-                    f"[/{_C_OK}]",
-                    spinner="dots",
+                proposals = []
+                for finding in posture_confirmed:
+                    plan = synthesize_header_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "response-header correction (no plan derived)"
+                    else:
+                        detail = plan.rule.value or plan.rule.declared_value
+                        control = (
+                            f"{plan.rule.op} '{plan.rule.header}'"
+                            + (f" = {detail}" if detail else "")
+                            + f"  ({plan.rule.method} {plan.rule.path})"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="header posture",
+                    color=_C_OK,
+                    proposals=proposals,
                 ):
-                    posture_outcomes = remediate_header_findings(result.graph)
-                for remediation in posture_outcomes:
-                    console.print(_posture_remediation_panel(remediation))
+                    with console.status(
+                        f"[{_C_OK}]injecting corrective headers + proving live…"
+                        f"[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        posture_outcomes = remediate_header_findings(result.graph)
+                    for remediation in posture_outcomes:
+                        console.print(_posture_remediation_panel(remediation))
         except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
             console.print(
                 Panel(
@@ -1205,21 +1515,184 @@ def run(arg):
                 )
                 from app.security_graph.cookies import (
                     remediate_cookie_findings,
+                    synthesize_cookie_remediation,
                 )
+                from app.commands.remediation_gate import RemediationProposal
 
-                with console.status(
-                    f"[{_C_OK}]hardening Set-Cookie + proving live…"
-                    f"[/{_C_OK}]",
-                    spinner="dots",
+                proposals = []
+                for finding in cookie_confirmed:
+                    plan = synthesize_cookie_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "Set-Cookie hardening (no plan derived)"
+                    else:
+                        detail = plan.rule.flag or plan.rule.value
+                        name = plan.rule.cookie_name or "every Set-Cookie"
+                        control = (
+                            f"{plan.rule.op} {detail} on '{name}'  "
+                            f"({plan.rule.method} {plan.rule.path})"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="insecure cookies",
+                    color=_C_OK,
+                    proposals=proposals,
                 ):
-                    cookie_outcomes = remediate_cookie_findings(result.graph)
-                for remediation in cookie_outcomes:
-                    console.print(_cookie_remediation_panel(remediation))
+                    with console.status(
+                        f"[{_C_OK}]hardening Set-Cookie + proving live…"
+                        f"[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        cookie_outcomes = remediate_cookie_findings(result.graph)
+                    for remediation in cookie_outcomes:
+                        console.print(_cookie_remediation_panel(remediation))
         except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
             console.print(
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]insecure cookie stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # A fourth, authenticated vulnerability class (Tier 2): privilege
+    # escalation via an operator LOGIN MATRIX. Where the classes above reason
+    # about an anonymous/declared caller, this asks the question that only
+    # becomes reachable once you hold a real session: can one logged-in account
+    # cross a privilege boundary it was never granted — reading another user's
+    # object (horizontal / IDOR / BOLA) or reaching an elevated function
+    # (vertical)? It is a THREE-PROBE differential (control + breach + anonymous
+    # baseline) so a bare status code is never the verdict. There is
+    # deliberately NO secure-baseline fallback: proving escalation needs real
+    # accounts and boundaries only the operator can supply, so an undeclared
+    # matrix simply means "skip". The matrix lives in a `privesc_matrix` section
+    # of the policy file, or in a dedicated file via $SENTINEL_PRIVESC_POLICY.
+    privesc_policy = None
+    privesc_source = os.environ.get("SENTINEL_PRIVESC_POLICY") or None
+    if privesc_source is None and policy_path:
+        # A combined policy file drives this class only if it carries a matrix;
+        # otherwise parsing the anonymous access policy as a matrix would fail.
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("privesc_matrix"):
+                privesc_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            privesc_source = None
+
+    if privesc_source:
+        from app.security_graph.privesc import load_privesc_policy
+
+        try:
+            privesc_policy = load_privesc_policy(privesc_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load privilege-escalation matrix "
+                        f"'{privesc_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]privesc matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            privesc_policy = None
+
+    if privesc_policy is not None and privesc_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]PRIVILEGE ESCALATION · "
+                f"LOGIN MATRIX[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(_privesc_matrix_panel(privesc_policy, privesc_source))
+        try:
+            from app.security_graph.privesc import run_privesc_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running control+breach differential + "
+                f"judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                privesc_results = run_privesc_investigation(
+                    result.graph,
+                    privesc_policy,
+                    target_base=result.target,
+                )
+            if privesc_results:
+                console.print(_privesc_findings_panel(privesc_results))
+
+            privesc_confirmed = result.graph.findings_for(
+                kind="privilege_escalation", status="OPEN"
+            )
+            if privesc_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]PRIVESC REMEDIATION · PATCH + PROVE · "
+                        f"{len(privesc_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.privesc import (
+                    remediate_privesc_findings,
+                    synthesize_privesc_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in privesc_confirmed:
+                    plan = synthesize_privesc_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "deny escalation (no plan derived)"
+                    else:
+                        control = (
+                            f"deny {plan.rule.attacker_name} → "
+                            f"{plan.rule.method} {plan.rule.path}  "
+                            f"({plan.rule.type})"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="privilege escalation",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the shield + proving the "
+                        f"boundary holds…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        privesc_outcomes = remediate_privesc_findings(
+                            result.graph
+                        )
+                    for remediation in privesc_outcomes:
+                        console.print(_privesc_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=(
+                        f"[{_C_BAD}]privilege escalation stage failed"
+                        f"[/{_C_BAD}]"
+                    ),
                     border_style=_C_BAD,
                 )
             )
