@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "description": "Operator oracle for the local demo target (assets/_shot_target.py) used ONLY to capture real CLI screenshots. External ground truth, not a Sentinel finding: each rule declares what SHOULD be true; the engine freshly re-probes the live demo target and reports a finding only when observed behaviour contradicts this. Deliberately mixes real violations with compliant controls so the captured board shows the honest differential.",
+  "principals": [
+    { "name": "anonymous", "kind": "anonymous", "roles": [] }
+  ],
+  "rules": [
+    {
+      "principal": "anonymous",
+      "method": "GET",
+      "path": "/api/Feedbacks",
+      "resource": "customer feedback collection",
+      "action": "read",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "Must not be readable anonymously. The demo target leaks the whole collection (200) — a real broken-access-control flaw the judge reproduces and CONFIRMS."
+    },
+    {
+      "principal": "anonymous",
+      "method": "GET",
+      "path": "/api/Users",
+      "resource": "user account collection",
+      "action": "read",
+      "decision": "deny",
+      "expected_statuses": [401, 403],
+      "note": "COMPLIANT CONTROL: the demo target denies this (401), so the judge returns DISPROVED and NO finding — proof Sentinel never manufactures a verdict."
+    }
+  ],
+  "header_rules": [
+    {
+      "method": "GET",
+      "path": "/",
+      "resource": "app root document",
+      "expectations": [
+        { "header": "Content-Security-Policy", "requirement": "must_present", "severity": "HIGH",
+          "rationale": "Primary XSS defence. Absent on the demo target — CONFIRMED, then the shield injects one." },
+        { "header": "Access-Control-Allow-Origin", "requirement": "must_not_equal", "value": "*", "severity": "HIGH",
+          "rationale": "A wildcard CORS origin lets any site read cross-origin responses. The demo target returns '*' — CONFIRMED, then stripped." },
+        { "header": "Referrer-Policy", "requirement": "must_present", "severity": "MEDIUM",
+          "rationale": "Without it the full URL can leak to third parties. Absent — CONFIRMED, then injected." },
+        { "header": "X-Recruiting", "requirement": "must_absent", "severity": "LOW",
+          "rationale": "A non-standard information-disclosure header. Present — CONFIRMED, then stripped." },
+        { "header": "X-Content-Type-Options", "requirement": "must_present", "severity": "MEDIUM",
+          "rationale": "COMPLIANT CONTROL: the demo target already sends 'nosniff' — DISPROVED, no finding." }
+      ]
+    }
+  ],
+  "cookie_rules": [
+    {
+      "method": "GET",
+      "path": "/",
+      "resource": "anonymous session cookie",
+      "expectations": [
+        { "cookie_name": "token", "check": "must_have_flag", "flag": "HttpOnly", "severity": "HIGH",
+          "rationale": "A session cookie without HttpOnly is readable by script — the classic session-theft / XSS-chaining pivot. The demo target ships it without HttpOnly — CONFIRMED, then the shield adds the flag." },
+        { "cookie_name": "token", "check": "must_have_flag", "flag": "Secure", "severity": "HIGH",
+          "rationale": "Without Secure the cookie is sent over plaintext HTTP. Absent — CONFIRMED, then the shield adds it." },
+        { "cookie_name": "token", "check": "samesite_must_not_equal", "value": "None", "severity": "MEDIUM",
+          "rationale": "COMPLIANT CONTROL: the cookie carries no SameSite=None, so 'must not equal None' holds — DISPROVED, no finding." }
+      ]
+    }
+  ]
+}

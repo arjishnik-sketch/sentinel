@@ -1,0 +1,56 @@
+[38;2;34;211;238m───────────────────────────────── [0m[1;38;2;34;211;238mAUTONOMOUS RESEARCH · 6 CYCLE(S)[0m[38;2;34;211;238m ─────────────────────────────────[0m
+[96m╭─[0m[96m─────────────────────────────────[0m[96m [0m[96m▐ CYCLE 01 · DECISION BOARD[0m[96m [0m[96m──────────────────────────────────[0m[96m─╮[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246m   action[0m[38;5;246m  [0m[1;96mauthorization.policy_validation[0m                                                      [96m│[0m
+[96m│[0m  [38;5;246m    score[0m[38;5;246m  [0m[1;33m0.820[0m                                                                                [96m│[0m
+[96m│[0m  [38;5;246m  probing[0m[38;5;246m  [0m[37mhttp://127.0.0.1:40913/api/Feedbacks[0m                                                 [96m│[0m
+[96m│[0m  [38;5;246moutranked[0m[38;5;246m  [0m[95m4[0m alternative candidate(s)                                                           [96m│[0m
+[96m│[0m  [38;5;246m     http[0m[38;5;246m  [0m[92m200[0m  [2m(COMPLETED)[0m                                                                     [96m│[0m
+[96m│[0m  [38;5;246m    judge[0m[38;5;246m  [0m[1;91mVALIDATED[0m  [2mfresh authorization behavior contradicts explicit policy[0m                  [96m│[0m
+[96m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37msingle supporting evidence item[0m                                                             [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mhypothesis represents an explicit authorization policy contradiction[0m                        [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mfresh validation can test whether the contradiction reproduces[0m                              [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mfresh validation directly tests an explicit policy contradiction[0m                            [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mhigh expected uncertainty reduction[0m                                                         [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246moutranked:  [0m[38;5;246mhttp://127.0.0.1:40913/api/Users   [0m[38;5;246mhttp://127.0.0.1:40913/api/Feedbacks   [0m          [96m│[0m
+[96m│[0m  [38;5;246mhttp://127.0.0.1:40913/api/Products   [0m[38;5;246m(+1 more)[0m                                                 [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[96m╭─[0m[96m─────────────────────────────────[0m[96m [0m[96m▐ CYCLE 02 · DECISION BOARD[0m[96m [0m[96m──────────────────────────────────[0m[96m─╮[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246m   action[0m[38;5;246m  [0m[1;96mauthorization.policy_validation[0m                                                      [96m│[0m
+[96m│[0m  [38;5;246m    score[0m[38;5;246m  [0m[1;33m0.820[0m                                                                                [96m│[0m
+[96m│[0m  [38;5;246m  probing[0m[38;5;246m  [0m[37mhttp://127.0.0.1:40913/api/Users[0m                                                     [96m│[0m
+[96m│[0m  [38;5;246moutranked[0m[38;5;246m  [0m[95m3[0m alternative candidate(s)                                                           [96m│[0m
+[96m│[0m  [38;5;246m     http[0m[38;5;246m  [0m[33m401[0m  [2m(COMPLETED)[0m                                                                     [96m│[0m
+[96m│[0m  [38;5;246m    judge[0m[38;5;246m  [0m[1;92mDISPROVED[0m  [2mfresh authorization behavior matches explicit policy[0m                      [96m│[0m
+[96m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37msingle supporting evidence item[0m                                                             [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mhypothesis represents an explicit authorization policy contradiction[0m                        [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mfresh validation can test whether the contradiction reproduces[0m                              [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mfresh validation directly tests an explicit policy contradiction[0m                            [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mhigh expected uncertainty reduction[0m                                                         [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246moutranked:  [0m[38;5;246mhttp://127.0.0.1:40913/api/Feedbacks   [0m[38;5;246mhttp://127.0.0.1:40913/api/Products   [0m       [96m│[0m
+[96m│[0m  [38;5;246mhttp://127.0.0.1:40913/api/Users   [0m                                                             [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[96m╭─[0m[96m─────────────────────────────────[0m[96m [0m[96m▐ CYCLE 03 · DECISION BOARD[0m[96m [0m[96m──────────────────────────────────[0m[96m─╮[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246m   action[0m[38;5;246m  [0m[1;96mauthorization.candidate_check[0m                                                        [96m│[0m
+[96m│[0m  [38;5;246m    score[0m[38;5;246m  [0m[1;33m0.505[0m                                                                                [96m│[0m
+[96m│[0m  [38;5;246m  probing[0m[38;5;246m  [0m[37mhttp://127.0.0.1:40913/api/Feedbacks[0m                                                 [96m│[0m
+[96m│[0m  [38;5;246moutranked[0m[38;5;246m  [0m[95m2[0m alternative candidate(s)                                                           [96m│[0m
+[96m│[0m  [38;5;246m     http[0m[38;5;246m  [0m[92m200[0m  [2m(COMPLETED)[0m                                                                     [96m│[0m
+[96m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37msingle supporting evidence item[0m                                                             [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mcanonical endpoint provenance is available[0m                                                  [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mcandidate check can establish whether an authorization candidate is reproducible[0m            [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mno prior completed candidate check exists[0m                                                   [96m│[0m
+[96m│[0m  [96m  ▹ [0m[37mbounded HTTP validation cost[0m                                                                [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m│[0m  [38;5;246moutranked:  [0m[38;5;246mhttp://127.0.0.1:40913/api/Products   [0m[38;5;246mhttp://127.0.0.1:40913/api/Users   [0m           [96m│[0m
+[96m│[0m                                                                                                  [96m│[0m
+[96m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m

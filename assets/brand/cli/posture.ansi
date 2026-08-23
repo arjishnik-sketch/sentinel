@@ -1,0 +1,90 @@
+[38;2;232;75;255m──────────────────────────── [0m[1;38;2;232;75;255mSECURITY MISCONFIGURATION · HEADER POSTURE[0m[38;2;232;75;255m ────────────────────────────[0m
+[95m╭─[0m[95m───────────────────────────────────[0m[95m [0m[95m▐ HEADER POSTURE ORACLE[0m[95m [0m[95m────────────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m          source[0m[38;5;246m  [0m[96m/mnt/d/scanner proj/sentinel/assets/shot_policy.json[0m                          [95m│[0m
+[95m│[0m  [38;5;246mdeclared posture[0m[38;5;246m  [0m[95m5[0m[37m header expectation(s) across 1 route(s)           [0m                          [95m│[0m
+[95m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mContent-Security-Policy[0m[38;5;246m [0m[38;5;246mMUST PRESENT[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m          [0m                                 [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mAccess-Control-Allow-Origin[0m[38;5;246m [0m[38;5;246mMUST NOT EQUAL '*'[0m[38;5;246m [0m[38;5;246m· GET /[0m                                 [95m│[0m
+[95m│[0m  [33mMEDIUM  [0m[38;5;246m [0m[37mReferrer-Policy[0m[38;5;246m [0m[38;5;246mMUST PRESENT[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m                  [0m                                 [95m│[0m
+[95m│[0m  [38;5;246mLOW     [0m[38;5;246m [0m[37mX-Recruiting[0m[38;5;246m [0m[38;5;246mMUST ABSENT[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m                      [0m                                 [95m│[0m
+[95m│[0m  [33mMEDIUM  [0m[38;5;246m [0m[37mX-Content-Type-Options[0m[38;5;246m [0m[38;5;246mMUST PRESENT[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m           [0m                                 [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246mGround truth only. A declared header expectation is a question for the judge — a finding [0m       [95m│[0m
+[95m│[0m  [38;5;246mrequires the live response to contradict it. A compliant header yields DISPROVED and no [0m        [95m│[0m
+[95m│[0m  [38;5;246mfinding.[0m                                                                                        [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[95m╭─[0m[95m───────────────────────────────[0m[95m [0m[95m▐ POSTURE · DETERMINISTIC JUDGE[0m[95m [0m[95m────────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [95m┏━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[0m  [95m│[0m
+[95m│[0m  [95m┃[0m[1;95m [0m[1;95mverdict     [0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mseverity[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mhttp[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mclaim                                                    [0m[1;95m [0m[95m┃[0m  [95m│[0m
+[95m│[0m  [95m┡━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m    [95m│[0m [38;5;246mHIGH[0m     [95m│[0m  [37m200[0m [95m│[0m observed Access-Control-Allow-Origin='*' violates         [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m              [95m│[0m          [95m│[0m      [95m│[0m declared po…                                              [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m    [95m│[0m [38;5;246mHIGH[0m     [95m│[0m  [37m200[0m [95m│[0m observed Content-Security-Policy=absent violates declared [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m              [95m│[0m          [95m│[0m      [95m│[0m pos…                                                      [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m    [95m│[0m [38;5;246mMEDIUM[0m   [95m│[0m  [37m200[0m [95m│[0m observed Referrer-Policy=absent violates declared posture [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m              [95m│[0m          [95m│[0m      [95m│[0m (mu…                                                      [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [92m○ no finding[0m [95m│[0m [38;5;246mMEDIUM[0m   [95m│[0m  [37m200[0m [95m│[0m observed X-Content-Type-Options='nosniff' satisfies       [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m              [95m│[0m          [95m│[0m      [95m│[0m declared …                                                [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m    [95m│[0m [38;5;246mLOW[0m      [95m│[0m  [37m200[0m [95m│[0m observed X-Recruiting='/#/jobs' violates declared posture [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m              [95m│[0m          [95m│[0m      [95m│[0m (mu…                                                      [95m│[0m  [95m│[0m
+[95m│[0m  [95m└──────────────┴──────────┴──────┴───────────────────────────────────────────────────────────┘[0m  [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m4 misconfiguration(s) reproduced against the live target and CONFIRMED; compliant controls [0m     [95m│[0m
+[95m│[0m  [38;5;246myield no finding.[0m                                                                               [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ POSTURE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                      [0m                                  [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mheader_posture_enforcement                        [0m                                  [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mSTRIP INSECURE[0m[37m [0m[37mAccess-Control-Allow-Origin[0m[37m [0m[38;5;246m· GET /[0m                                  [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                            [0m                                  [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m[37m      [0m                                  [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m             [0m                                  [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared posture now holds and the [0m         [92m│[0m
+[92m│[0m  [38;5;246mmisconfigura…[0m                                                                                   [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ POSTURE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                              [0m                          [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mheader_posture_enforcement                                [0m                          [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mSET[0m[37m [0m[37mContent-Security-Policy[0m[37m → "default-src 'self'" [0m[38;5;246m· GET /[0m                          [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                                    [0m                          [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m[37m              [0m                          [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m                     [0m                          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared posture now holds and the [0m         [92m│[0m
+[92m│[0m  [38;5;246mmisconfigura…[0m                                                                                   [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ POSTURE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mheader_posture_enforcement                  [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mSET[0m[37m [0m[37mReferrer-Policy[0m[37m → "no-referrer" [0m[38;5;246m· GET /[0m[37m [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                      [0m                                        [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m                                        [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m       [0m                                        [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared posture now holds and the [0m         [92m│[0m
+[92m│[0m  [38;5;246mmisconfigura…[0m                                                                                   [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m────────────────────────────[0m[92m [0m[92m▐ POSTURE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mheader_posture_enforcement                  [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mSTRIP[0m[37m [0m[37mX-Recruiting[0m[37m [0m[38;5;246m· GET /[0m[37m                  [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                      [0m                                        [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m                                        [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m       [0m                                        [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared posture now holds and the [0m         [92m│[0m
+[92m│[0m  [38;5;246mmisconfigura…[0m                                                                                   [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m

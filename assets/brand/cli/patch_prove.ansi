@@ -1,0 +1,15 @@
+[38;2;45;212;143m──────────────────────────── [0m[1;38;2;45;212;143mREMEDIATION · PATCH + PROVE · 1 FINDING(S)[0m[38;2;45;212;143m ────────────────────────────[0m
+[92m╭─[0m[92m────────────────────────────────[0m[92m [0m[92m▐ REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m     verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                        [0m                              [92m│[0m
+[92m│[0m  [38;5;246m    strategy[0m[38;5;246m  [0m[37mauthorization_enforcement                           [0m                              [92m│[0m
+[92m│[0m  [38;5;246m     control[0m[38;5;246m  [0m[1;91mMUST DENY[0m[37m [0m[37manonymous[0m[37m [0m[38;5;246m(anonymous)[0m[37m [0m[38;5;246m→[0m[37m [0m[37mGET /api/Feedbacks[0m                              [92m│[0m
+[92m│[0m  [38;5;246m    upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                              [0m                              [92m│[0m
+[92m│[0m  [38;5;246m  live prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m403[0m[37m [0m[1;92mDISPROVED[0m[37m        [0m                              [92m│[0m
+[92m│[0m  [38;5;246m   artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · envoy-rbac · caddy[0m[37m          [0m                              [92m│[0m
+[92m│[0m  [38;5;246msource patch[0m[38;5;246m  [0m[38;5;246mNOT_PROVIDED[0m[37m [0m[37m                                       [0m                              [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED (observed 403); the confirmed contradiction no [0m  [92m│[0m
+[92m│[0m  [38;5;246mlonge…[0m                                                                                          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m

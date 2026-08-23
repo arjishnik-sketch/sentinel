@@ -1,0 +1,55 @@
+[38;2;232;75;255m──────────────────────────────── [0m[1;38;2;232;75;255mINSECURE COOKIES · SESSION SAFETY[0m[38;2;232;75;255m ─────────────────────────────────[0m
+[95m╭─[0m[95m───────────────────────────────────[0m[95m [0m[95m▐ COOKIE POSTURE ORACLE[0m[95m [0m[95m────────────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m          source[0m[38;5;246m  [0m[96m/mnt/d/scanner proj/sentinel/assets/shot_policy.json[0m                          [95m│[0m
+[95m│[0m  [38;5;246mdeclared posture[0m[38;5;246m  [0m[95m3[0m[37m cookie expectation(s) across 1 route(s)           [0m                          [95m│[0m
+[95m│[0m  [38;5;246m──────────────────────────────────────────────────────────────────────────────────────────────[0m  [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mtoken[0m[38;5;246m [0m[38;5;246mMUST HAVE FLAG 'HttpOnly'[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m     [0m                                           [95m│[0m
+[95m│[0m  [91mHIGH    [0m[38;5;246m [0m[37mtoken[0m[38;5;246m [0m[38;5;246mMUST HAVE FLAG 'Secure'[0m[38;5;246m [0m[38;5;246m· GET /[0m[38;5;246m       [0m                                           [95m│[0m
+[95m│[0m  [33mMEDIUM  [0m[38;5;246m [0m[37mtoken[0m[38;5;246m [0m[38;5;246mSAMESITE MUST NOT EQUAL 'None'[0m[38;5;246m [0m[38;5;246m· GET /[0m                                           [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246mGround truth only. A declared cookie expectation is a question for the judge — a finding [0m       [95m│[0m
+[95m│[0m  [38;5;246mrequires a Set-Cookie the target actually sets to contradict it. A compliant, or simply unset,[0m  [95m│[0m
+[95m│[0m  [38;5;246mcookie yields DISPROVED and no finding.[0m                                                         [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[95m╭─[0m[95m───────────────────────────────[0m[95m [0m[95m▐ COOKIES · DETERMINISTIC JUDGE[0m[95m [0m[95m────────────────────────────────[0m[95m─╮[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [95m┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[0m  [95m│[0m
+[95m│[0m  [95m┃[0m[1;95m [0m[1;95mverdict      [0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mseverity [0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95m http[0m[1;95m [0m[95m┃[0m[1;95m [0m[1;95mclaim                                                 [0m[1;95m [0m[95m┃[0m  [95m│[0m
+[95m│[0m  [95m┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m     [95m│[0m [38;5;246mHIGH[0m      [95m│[0m   [37m200[0m [95m│[0m observed cookie 'token' (token) violates declared p…   [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [91m● FINDING[0m     [95m│[0m [38;5;246mHIGH[0m      [95m│[0m   [37m200[0m [95m│[0m observed cookie 'token' (token) violates declared p…   [95m│[0m  [95m│[0m
+[95m│[0m  [95m│[0m [92m○ no finding[0m  [95m│[0m [38;5;246mMEDIUM[0m    [95m│[0m   [37m200[0m [95m│[0m observed cookie 'token' (token) satisfies declared …   [95m│[0m  [95m│[0m
+[95m│[0m  [95m└───────────────┴───────────┴───────┴────────────────────────────────────────────────────────┘[0m  [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m│[0m  [38;5;246m2 insecure cookie(s) reproduced against the live target and CONFIRMED; compliant or unset [0m      [95m│[0m
+[95m│[0m  [38;5;246mcookies yield no finding.[0m                                                                       [95m│[0m
+[95m│[0m                                                                                                  [95m│[0m
+[95m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m─────────────────────────────[0m[92m [0m[92m▐ COOKIE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mcookie_security_enforcement                 [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mADD FLAG[0m[37m [0m[37mHttpOnly[0m[37m [0m[38;5;246mon token cookie · GET /[0m[37m   [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                      [0m                                        [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m                                        [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m       [0m                                        [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared cookie posture now holds and the [0m  [92m│[0m
+[92m│[0m  [38;5;246mweak …[0m                                                                                          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+[92m╭─[0m[92m─────────────────────────────[0m[92m [0m[92m▐ COOKIE REMEDIATION · PATCH + PROVE[0m[92m [0m[92m─────────────────────────────[0m[92m─╮[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246m   verdict[0m[38;5;246m  [0m[1;92m✔ FIX PROVEN[0m[37m                                [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  strategy[0m[38;5;246m  [0m[37mcookie_security_enforcement                 [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m   control[0m[38;5;246m  [0m[1;96mADD FLAG[0m[37m [0m[37mSecure[0m[37m [0m[38;5;246mon token cookie · GET /[0m[37m     [0m                                        [92m│[0m
+[92m│[0m  [38;5;246m  upstream[0m[38;5;246m  [0m[38;5;246mhttp://127.0.0.1:40913[0m[37m                      [0m                                        [92m│[0m
+[92m│[0m  [38;5;246mlive prove[0m[38;5;246m  [0m[38;5;246mbefore[0m[37m [0m[37m200[0m[37m [0m[1;91mVALIDATED[0m[37m  [0m[38;5;246m→[0m[37m  [0m[38;5;246mafter[0m[37m [0m[37m200[0m[37m [0m[1;92mDISPROVED[0m                                        [92m│[0m
+[92m│[0m  [38;5;246m artifacts[0m[38;5;246m  [0m[96mportable-json · nginx · caddy · envoy[0m[37m       [0m                                        [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m│[0m  [38;5;246munder enforcement the judge returned DISPROVED; the declared cookie posture now holds and the [0m  [92m│[0m
+[92m│[0m  [38;5;246mweak …[0m                                                                                          [92m│[0m
+[92m│[0m                                                                                                  [92m│[0m
+[92m╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
