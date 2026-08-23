@@ -886,6 +886,8 @@ def run(arg):
             f"the same file, or via $SENTINEL_HEADER_POLICY[/dim]\n"
             f"[dim]insecure-cookie rules live in a 'cookie_rules' section of "
             f"the same file, or via $SENTINEL_COOKIE_POLICY[/dim]\n"
+            f"[dim]with no policy, header + cookie passes run off a built-in "
+            f"secure baseline; set $SENTINEL_NO_BASELINE=1 to disable it[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
             f"PATCH + PROVE stage[/dim]"
         )
@@ -1028,6 +1030,12 @@ def run(arg):
     # and a finding materialises only on a reproduced contradiction. A header
     # policy may live in the same policy file (a `header_rules` section) or
     # be pointed at via $SENTINEL_HEADER_POLICY.
+    # Zero-config: when the operator declares no posture, Sentinel falls back
+    # to a built-in secure baseline so both browser-facing classes still run.
+    # An operator-authored policy always wins; $SENTINEL_NO_BASELINE=1 disables
+    # the fallback (operator-only mode).
+    baseline_enabled = not os.environ.get("SENTINEL_NO_BASELINE")
+
     header_policy = None
     header_source = os.environ.get("SENTINEL_HEADER_POLICY") or policy_path
     if header_source:
@@ -1048,6 +1056,15 @@ def run(arg):
                 )
             )
             header_policy = None
+
+    if (header_policy is None or not header_policy.rules) and baseline_enabled:
+        from app.security_graph.baseline import (
+            BASELINE_HEADER_SOURCE,
+            default_header_policy,
+        )
+
+        header_policy = default_header_policy()
+        header_source = BASELINE_HEADER_SOURCE
 
     if header_policy is not None and header_policy.rules:
         console.print()
@@ -1138,6 +1155,15 @@ def run(arg):
                 )
             )
             cookie_policy = None
+
+    if (cookie_policy is None or not cookie_policy.rules) and baseline_enabled:
+        from app.security_graph.baseline import (
+            BASELINE_COOKIE_SOURCE,
+            default_cookie_policy,
+        )
+
+        cookie_policy = default_cookie_policy()
+        cookie_source = BASELINE_COOKIE_SOURCE
 
     if cookie_policy is not None and cookie_policy.rules:
         console.print()

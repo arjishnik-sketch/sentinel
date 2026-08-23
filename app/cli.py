@@ -10,6 +10,7 @@ from .commands.skill_cmd import run as skill_cmd
 from .commands.random_cmd import run as random_cmd
 from .commands.investigate_cmd import run as investigate_cmd
 from .commands.login_cmd import run as login_cmd
+from .commands.import_spec_cmd import run as import_spec_cmd
 
 console=Console()
 
@@ -77,6 +78,8 @@ investigate <target> [cycles] [access_policy.json] [source_repo_dir]
 
 login <target> [login_url] [cycles] [access_policy.json]
 
+import-spec <openapi.json|swagger.yaml> [out.json]
+
 resume <engagement>
 
 search <keyword>
@@ -132,6 +135,8 @@ router.register("hunt",hunt)
 router.register("investigate",investigate_cmd)
 
 router.register("login",login_cmd)
+
+router.register("import-spec",import_spec_cmd)
 
 router.register("resume",resume)
 

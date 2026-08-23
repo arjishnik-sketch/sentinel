@@ -1,0 +1,57 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Petstore (Sentinel spec-import sample)",
+    "version": "1.0.0",
+    "description": "A compact OpenAPI 3 sample exercising all three declared-intent cases the importer translates: a secured operation (auth required), an explicitly public operation (security: []), and a silent operation (no declaration -> never guessed)."
+  },
+  "servers": [
+    { "url": "https://api.petstore.test/v3" }
+  ],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List pets (public catalogue)",
+        "security": []
+      },
+      "post": {
+        "operationId": "createPet",
+        "summary": "Create a pet (staff only)",
+        "security": [ { "petstore_auth": ["write:pets"] } ]
+      }
+    },
+    "/pets/{petId}": {
+      "get": {
+        "operationId": "getPetById",
+        "summary": "Fetch one pet",
+        "security": [ { "api_key": [] } ]
+      },
+      "delete": {
+        "operationId": "deletePet",
+        "summary": "Delete a pet (admin)",
+        "security": [ { "petstore_auth": ["write:pets"] } ]
+      }
+    },
+    "/store/inventory": {
+      "get": {
+        "operationId": "getInventory",
+        "summary": "Inventory counts (declaration omitted on purpose)"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "api_key": { "type": "apiKey", "name": "api_key", "in": "header" },
+      "petstore_auth": {
+        "type": "oauth2",
+        "flows": {
+          "implicit": {
+            "authorizationUrl": "https://api.petstore.test/oauth/authorize",
+            "scopes": { "write:pets": "modify pets", "read:pets": "read pets" }
+          }
+        }
+      }
+    }
+  }
+}
