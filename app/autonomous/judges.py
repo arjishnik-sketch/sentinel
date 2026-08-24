@@ -56,6 +56,31 @@ _LOC_MAP = {
 _INCONCLUSIVE = "INCONCLUSIVE"
 
 
+@dataclass(frozen=True)
+class JudgeEvidence:
+    """What a judge return-carries as its verdict evidence.
+
+    Crucially it holds the very ``graph`` the pure judge just proved on — a
+    VALIDATED probe leaves the OPEN finding recorded there — so the CLI's
+    PATCH→PROVE stage can remediate + re-prove on THAT graph without opening a
+    second socket. ``.status`` / ``.reason`` delegate to the ProbeResult so the
+    object stays duck-compatible with anything reading a bare result."""
+
+    technique: str
+    result: object            # the security_graph ProbeResult (results[0])
+    graph: object             # the SecurityGraph the judge proved on
+    policy: object            # the single-check policy that was run
+    target_base: str
+
+    @property
+    def status(self):
+        return getattr(self.result, "status", _INCONCLUSIVE)
+
+    @property
+    def reason(self):
+        return getattr(self.result, "reason", "")
+
+
 def _origin(url: str) -> str:
     """scheme://netloc of a hypothesis URL — the ``target_base`` the run wants."""
     sp = urlsplit(url if "://" in (url or "") else f"http://{url or ''}")
@@ -152,11 +177,16 @@ def _adjudicate(hyp, spec, *, _run, _graph):
 
     check = spec.build_check(hyp, _path(hyp.url))
     policy = spec.policy_cls(checks=(check,))
-    results = _run(_graph(), policy, target_base=origin)
+    graph = _graph()
+    results = _run(graph, policy, target_base=origin)
     if not results:
         return (_INCONCLUSIVE, "judge produced no probe result", None)
     result = results[0]
-    return (getattr(result, "status", _INCONCLUSIVE), getattr(result, "reason", ""), result)
+    evidence = JudgeEvidence(
+        technique=hyp.technique, result=result, graph=graph,
+        policy=policy, target_base=origin,
+    )
+    return (getattr(result, "status", _INCONCLUSIVE), getattr(result, "reason", ""), evidence)
 
 
 def make_judge(technique: str, spec: "_JudgeSpec | None" = None) -> Callable:

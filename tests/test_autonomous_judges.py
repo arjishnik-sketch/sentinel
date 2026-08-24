@@ -111,6 +111,22 @@ def test_status_passthrough_disproved():
     assert J.make_judge("path_traversal")(_h("path_traversal", param="file"), None, _run=fake)[0] == "DISPROVED"
 
 
+# ---- evidence carries the proven graph (so PATCH->PROVE reuses it) -----------
+
+def test_evidence_carries_graph_policy_and_technique():
+    sentinel_graph = object()
+    fake = FakeRun(status="VALIDATED", reason="boolean toggled")
+    _s, _r, ev = J.make_judge("sql_injection")(
+        _h("sql_injection", "http://shop.test/rest/search?q=apple", param="q"),
+        None, _run=fake, _graph=lambda: sentinel_graph,
+    )
+    assert isinstance(ev, J.JudgeEvidence)
+    assert ev.graph is sentinel_graph          # the very graph the judge proved on
+    assert ev.technique == "sql_injection"
+    assert ev.policy is fake.calls[0][1]        # the single-check policy that ran
+    assert ev.status == "VALIDATED" and ev.reason == "boolean toggled"  # delegates to result
+
+
 # ---- integration with the orchestrator's dispose seam -----------------------
 
 def test_orchestrator_confirms_via_real_adapter():
