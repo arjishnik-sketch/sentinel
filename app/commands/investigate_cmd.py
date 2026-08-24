@@ -1944,6 +1944,211 @@ def _cors_remediation_panel(outcome) -> Panel:
     )
 
 
+def _ssrf_matrix_panel(
+    policy, source: str, *, synthesized: bool = False
+) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "ssrf matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered fetch-surface(s)"
+            if synthesized
+            else "declared fetch-surface(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[{_C_DIM}]MUST NOT fetch an attacker-chosen URL ·[/{_C_DIM}] "
+            f"[white]{check.method} {_short(check.path, 32)}[/white] "
+            f"[{_C_DIM}]?{_short(check.param, 16)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        (
+            "\nAuto-discovered surfaces — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by an OUT-OF-BAND CALLBACK "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by an OUT-OF-BAND CALLBACK "
+        )
+        + "differential on the live target: a same-origin CONTROL anchor (the "
+        "parameter set to the target's OWN origin — a benign fetch that reaches "
+        "only the target, establishing that the payload nonce is un-hit before "
+        "injection), plus a PAYLOAD probe carrying Sentinel's OWN loopback "
+        "collaborator URL with a fresh random nonce. SSRF is VALIDATED only when "
+        "the collaborator records a hit on that exact nonce — a token that appears "
+        "ONLY in the URL we injected — while a never-injected control nonce stays "
+        "un-hit. A bare status code is never the verdict; no callback → DISPROVED. "
+        "The injected URL is ALWAYS our own 127.0.0.1 listener — never a metadata "
+        "IP, an RFC-1918 host, or any third party.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ SSRF · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ SSRF MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+def _ssrf_findings_panel(results) -> Panel:
+    """Render every SSRF verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("surface")
+    table.add_column("callback", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ no callback",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        callback = "HIT" if probe.callback_hit else ("—" if probe.callback_hit is not None else "?")
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.param, 20)}[/white] "
+            f"[{_C_DIM}]({probe.location})[/{_C_DIM}]",
+            f"[{_C_DIM}]{callback}[/{_C_DIM}]",
+            _short(probe.reason, 40),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} SSRF(s) reproduced against the live target — a payload "
+        f"probe provably reached Sentinel's loopback collaborator on the "
+        f"unforgeable nonce while the never-injected control nonce stayed un-hit "
+        f"and the same-origin control anchored the pre-injection baseline — and "
+        f"CONFIRMED; a parameter that triggers no callback (or is blocked) yields "
+        f"no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ SSRF · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+def _ssrf_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed SSRF finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[{_C_DIM}]deny off-allowlist fetch on[/{_C_DIM}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 28)}[/white]",
+        )
+        table.add_row(
+            "egress allow",
+            f"[{_C_DIM}]{_short(rule.allow_netloc, 40)} (the target itself)[/{_C_DIM}]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]allowlist egress destinations + block loopback / "
+            f"link-local / cloud-metadata ranges at the fetch layer[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+    verification = outcome.verification
+    if verification is not None:
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ SSRF REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -3180,6 +3385,148 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]cors stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # Eleventh class. SSRF's ground truth is an OUT-OF-BAND CALLBACK differential
+    # against the live target — a same-origin control anchor plus a payload
+    # carrying Sentinel's OWN loopback collaborator URL on a fresh nonce — so the
+    # operator only ever needed to supply WHERE to look. The matrix lives in an
+    # `ssrf_matrix` section of the policy file, or a dedicated file via
+    # $SENTINEL_SSRF_POLICY; in discover mode it is synthesized from live recon.
+    # The injected URL is ALWAYS our own 127.0.0.1 listener — never a metadata IP.
+    ssrf_policy = None
+    ssrf_source = os.environ.get("SENTINEL_SSRF_POLICY") or None
+    if ssrf_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("ssrf_matrix"):
+                ssrf_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            ssrf_source = None
+
+    if ssrf_source:
+        from app.security_graph.ssrf import load_ssrf_policy
+
+        try:
+            ssrf_policy = load_ssrf_policy(ssrf_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load SSRF matrix '{ssrf_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]ssrf matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            ssrf_policy = None
+
+    # DISCOVER MODE: with no operator matrix, SYNTHESIZE the fetch surface from
+    # live recon. Honest because SSRF's ground truth is a live out-of-band
+    # differential — the operator only ever needed to supply *where to look*,
+    # which recon observed for us; the judge still proves every candidate live.
+    ssrf_synthesized = False
+    if discover_mode and (ssrf_policy is None or not ssrf_policy.checks):
+        from app.security_graph.ssrf import synthesize_ssrf_policy
+
+        ssrf_discovery = synthesize_ssrf_policy(result.graph)
+        if ssrf_discovery.policy.checks:
+            ssrf_policy = ssrf_discovery.policy
+            ssrf_source = f"synthesized · live-recon ({ssrf_discovery.note})"
+            ssrf_synthesized = True
+    if ssrf_policy is not None and ssrf_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]SSRF · OUT-OF-BAND CALLBACK "
+                f"DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(
+            _ssrf_matrix_panel(
+                ssrf_policy,
+                ssrf_source,
+                synthesized=ssrf_synthesized,
+            )
+        )
+        try:
+            from app.security_graph.ssrf import run_ssrf_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running same-origin control + loopback-collaborator "
+                f"nonce payload differential + judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                ssrf_results = run_ssrf_investigation(
+                    result.graph,
+                    ssrf_policy,
+                    target_base=result.target,
+                )
+            if ssrf_results:
+                console.print(_ssrf_findings_panel(ssrf_results))
+
+            ssrf_confirmed = result.graph.findings_for(
+                kind="ssrf", status="OPEN"
+            )
+            if ssrf_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]SSRF REMEDIATION · PATCH + PROVE · "
+                        f"{len(ssrf_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.ssrf import (
+                    remediate_ssrf_findings,
+                    synthesize_ssrf_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in ssrf_confirmed:
+                    plan = synthesize_ssrf_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "request-guard (no plan derived)"
+                    else:
+                        control = (
+                            f"deny off-allowlist fetch on "
+                            f"{plan.rule.method} {plan.rule.path} "
+                            f"?{plan.rule.param}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="ssrf",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the egress-allowlist request-guard + "
+                        f"proving no callback lands under the shield…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        ssrf_outcomes = remediate_ssrf_findings(result.graph)
+                    for remediation in ssrf_outcomes:
+                        console.print(_ssrf_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]ssrf stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

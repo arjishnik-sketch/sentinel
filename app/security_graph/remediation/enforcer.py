@@ -346,20 +346,37 @@ def _host_of(value: str) -> str:
         return ""
 
 
+def _netloc_of(value: str) -> str:
+    """Pure: the lowercased ``host:port`` netloc of an absolute URL, else ''."""
+    try:
+        return (urlsplit(value.strip()).netloc or "").lower()
+    except (ValueError, AttributeError):
+        return ""
+
+
 def _matches_url_allowlist(value: str, allow) -> bool:
     """
     Pure: True (deny) when `value` is an absolute off-origin URL whose host is
     NOT in `allow`. Relative paths and empty values carry no host and are never
     denied (they cannot redirect/fetch off-origin). Inverted vs the regex
     families: this is an allowlist, so the DEFAULT for a foreign host is deny.
+
+    An allow entry is honoured whether it is a bare host (``example.com``) or a
+    ``host:port`` netloc (``127.0.0.1:3000``): the value is permitted when EITHER
+    its bare host OR its ``host:port`` netloc is on the allowlist. This keeps the
+    open-redirect bare-host entries working unchanged while letting SSRF pin the
+    allow entry to the target's exact ``host:port`` — so a same-host loopback
+    collaborator on a DIFFERENT port (the SSRF payload) is still denied even
+    though it shares the target's hostname.
     """
     if not value:
         return False
     host = _host_of(value)
     if not host:
         return False  # relative path / same-origin — nothing to block
+    netloc = _netloc_of(value)
     allowed = {str(h).strip().lower() for h in (allow or ())}
-    return host not in allowed
+    return host not in allowed and netloc not in allowed
 
 
 def _decode_jwt_alg(token: str):

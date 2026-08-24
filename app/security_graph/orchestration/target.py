@@ -261,6 +261,18 @@ class TargetResearchPipeline:
             )
         )
 
+        # SSRF probe (kind `ssrf_check`): injects ONLY Sentinel's own loopback
+        # collaborator URL and captures the out-of-band callback differential. The
+        # scope allowlist binds probing to the engagement host; the injected value
+        # is never a metadata IP, an RFC-1918 host, or any third party.
+        from ..ssrf.executor import SsrfProbeExecutor
+
+        registry.register(
+            SsrfProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod
