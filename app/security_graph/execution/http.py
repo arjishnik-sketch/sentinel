@@ -85,6 +85,21 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             else None
         )
 
+    def _urlopen(self, request: Request, *, timeout: float):
+        """
+        Open one already-built request. Overridable seam.
+
+        The default preserves urllib's behaviour verbatim (including
+        transparent redirect-following). A subclass that must OBSERVE a
+        redirect rather than follow it — the open-redirect class needs the
+        ``Location`` header, not the followed page — overrides this to use an
+        opener with redirect-following disabled, so a 3xx surfaces as an
+        ``HTTPError`` the existing ``except HTTPError`` branch below captures
+        (headers, including ``Location``, and the 3xx status code). This never
+        changes what any current executor does.
+        """
+        return urlopen(request, timeout=timeout)
+
     def _enforce_scope(self, url: str) -> None:
         parsed = urlparse(url)
 
@@ -153,7 +168,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
         )
 
         try:
-            with urlopen(
+            with self._urlopen(
                 request,
                 timeout=request_spec.timeout,
             ) as response:

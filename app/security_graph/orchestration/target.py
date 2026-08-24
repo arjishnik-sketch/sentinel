@@ -237,6 +237,19 @@ class TargetResearchPipeline:
             )
         )
 
+        # The open-redirect class reuses the base HTTP fact executor, but with
+        # redirect-FOLLOWING disabled so the response Location header is OBSERVED
+        # (never followed) — the unroutable off-origin nonce host is never
+        # contacted. No shared interpretation; the pure judge decides the
+        # two-probe host differential.
+        from ..open_redirect.executor import OpenRedirectProbeExecutor
+
+        registry.register(
+            OpenRedirectProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

@@ -15,6 +15,7 @@ _SEVERITY_BY_KIND = {
     "privilege_escalation": "HIGH",
     "injection": "HIGH",
     "template_injection": "HIGH",
+    "open_redirect": "MEDIUM",
 }
 _DEFAULT_SEVERITY = "HIGH"
 
