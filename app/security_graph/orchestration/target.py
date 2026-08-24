@@ -250,6 +250,17 @@ class TargetResearchPipeline:
             )
         )
 
+        # CORS probe (kind `cors_check`): sends the attacker Origin header and
+        # captures the ACAO/ACAC response headers for the two-probe origin
+        # differential.
+        from ..cors.executor import CorsProbeExecutor
+
+        registry.register(
+            CorsProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

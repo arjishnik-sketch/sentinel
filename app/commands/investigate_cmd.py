@@ -1741,6 +1741,209 @@ def _open_redirect_remediation_panel(outcome) -> Panel:
     )
 
 
+def _cors_matrix_panel(
+    policy, source: str, *, synthesized: bool = False
+) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "cors matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered cross-origin surface(s)"
+            if synthesized
+            else "declared cross-origin surface(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[{_C_DIM}]MUST NOT trust an arbitrary Origin ·[/{_C_DIM}] "
+            f"[white]{check.method} {_short(check.path, 40)}[/white]"
+        )
+
+    note = Text(
+        (
+            "\nAuto-discovered surfaces — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by a TWO-PROBE ORIGIN "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by a TWO-PROBE ORIGIN "
+        )
+        + "differential on the live target: a no-Origin CONTROL anchor (the same "
+        "request with no Origin header — the baseline), plus a PAYLOAD probe "
+        "carrying an Origin header naming a random, unroutable nonce origin "
+        "(https://sentinel-<nonce>.example). A CORS misconfiguration is VALIDATED "
+        "only when the payload response reflects that exact nonce origin (or *) in "
+        "Access-Control-Allow-Origin — a value that could only have come from our "
+        "input — AND sets Access-Control-Allow-Credentials: true, AND the control "
+        "proves the reflection is origin-driven. Reflection alone is never the "
+        "verdict; reflection without credentials → DISPROVED. The nonce origin is "
+        "only ECHOED back, never contacted.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ CORS · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ CORS MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+def _cors_findings_panel(results) -> Panel:
+    """Render every CORS verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("surface")
+    table.add_column("ACAO", justify="right")
+    table.add_column("creds", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ not reflected",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        creds = "true" if (probe.payload_acac or "").strip().lower() == "true" else "—"
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{probe.method} {_short(probe.path, 22)}[/white]",
+            f"[{_C_DIM}]{_short(probe.payload_acao or '—', 26)}[/{_C_DIM}]",
+            f"[{_C_DIM}]{creds}[/{_C_DIM}]",
+            _short(probe.reason, 40),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} CORS misconfiguration(s) reproduced against the live "
+        f"target — a payload probe provably reflected the unforgeable nonce origin "
+        f"(or *) with Access-Control-Allow-Credentials: true while the no-Origin "
+        f"control proved the reflection is origin-driven — and CONFIRMED; a surface "
+        f"that does not reflect, reflects without credentials, or emits a static "
+        f"header yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ CORS · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+def _cors_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed CORS finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]RESPONSE-REWRITE[/bold {_C_BAD}] "
+            f"[{_C_DIM}]strip[/{_C_DIM}] "
+            f"[white]Access-Control-Allow-Origin/Credentials[/white] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 30)}[/white]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]never reflect an arbitrary Origin with credentials "
+            f"(strict server-side origin allowlist)[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+
+    verification = outcome.verification
+    if verification is not None:
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · caddy · envoy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ CORS REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -2834,6 +3037,149 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]open-redirect stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # Tenth class. CORS's ground truth is a TWO-PROBE ORIGIN differential against
+    # the live target — a no-Origin control anchor plus a payload carrying an
+    # attacker Origin naming a random, unroutable nonce origin — so the operator
+    # only ever needed to supply WHERE to look. The matrix lives in a `cors_matrix`
+    # section of the policy file, or in a dedicated file via $SENTINEL_CORS_POLICY;
+    # in discover mode it is synthesized from live recon. The SAME pure judge
+    # decides every check; the nonce origin is unforgeable and only ever ECHOED.
+    cors_policy = None
+    cors_source = os.environ.get("SENTINEL_CORS_POLICY") or None
+    if cors_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("cors_matrix"):
+                cors_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            cors_source = None
+
+    if cors_source:
+        from app.security_graph.cors import load_cors_policy
+
+        try:
+            cors_policy = load_cors_policy(cors_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load CORS matrix '{cors_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]cors matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            cors_policy = None
+
+    # DISCOVER MODE: with no operator matrix, SYNTHESIZE the cross-origin surface
+    # from live recon. Honest because CORS's ground truth is a live differential —
+    # the operator only ever needed to supply *where to look*, which recon observed
+    # for us; the judge still proves every candidate on the live target.
+    cors_synthesized = False
+    if discover_mode and (cors_policy is None or not cors_policy.checks):
+        from app.security_graph.cors import synthesize_cors_policy
+
+        cors_discovery = synthesize_cors_policy(result.graph)
+        if cors_discovery.policy.checks:
+            cors_policy = cors_discovery.policy
+            cors_source = f"synthesized · live-recon ({cors_discovery.note})"
+            cors_synthesized = True
+    # __CORS_PASS__
+
+    if cors_policy is not None and cors_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]CORS · TWO-PROBE ORIGIN "
+                f"DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(
+            _cors_matrix_panel(
+                cors_policy,
+                cors_source,
+                synthesized=cors_synthesized,
+            )
+        )
+        try:
+            from app.security_graph.cors import run_cors_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running no-Origin control + attacker-Origin nonce "
+                f"payload differential + judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                cors_results = run_cors_investigation(
+                    result.graph,
+                    cors_policy,
+                    target_base=result.target,
+                )
+            if cors_results:
+                console.print(_cors_findings_panel(cors_results))
+
+            cors_confirmed = result.graph.findings_for(
+                kind="cors_misconfig", status="OPEN"
+            )
+            if cors_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]CORS REMEDIATION · PATCH + PROVE · "
+                        f"{len(cors_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.cors import (
+                    remediate_cors_findings,
+                    synthesize_cors_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in cors_confirmed:
+                    plan = synthesize_cors_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "response-rewrite (no plan derived)"
+                    else:
+                        control = (
+                            f"strip ACAO/ACAC on "
+                            f"{plan.rule.method} {plan.rule.path}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="cors",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the response-rewrite shield + "
+                        f"proving the reflection no longer reproduces…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        cors_outcomes = remediate_cors_findings(result.graph)
+                    for remediation in cors_outcomes:
+                        console.print(_cors_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]cors stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

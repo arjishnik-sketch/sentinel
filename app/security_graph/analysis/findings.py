@@ -16,6 +16,7 @@ _SEVERITY_BY_KIND = {
     "injection": "HIGH",
     "template_injection": "HIGH",
     "open_redirect": "MEDIUM",
+    "cors_misconfig": "MEDIUM",
 }
 _DEFAULT_SEVERITY = "HIGH"
 
