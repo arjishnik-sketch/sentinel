@@ -18,6 +18,7 @@ _SEVERITY_BY_KIND = {
     "open_redirect": "MEDIUM",
     "cors_misconfig": "MEDIUM",
     "ssrf": "HIGH",
+    "broken_auth": "HIGH",
 }
 _DEFAULT_SEVERITY = "HIGH"
 

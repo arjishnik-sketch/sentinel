@@ -24,7 +24,66 @@ from dataclasses import replace
 
 from ..policy.access_policy import AccessPolicy, PolicyPrincipal
 from ..privesc.privesc_policy import PrivEscPolicy
+from ..broken_auth.broken_auth_policy import BrokenAuthPolicy, BrokenAuthPrincipal
 from .browser_login import SESSION_COOKIE_NAMES, CapturedSession
+
+
+def _bearer_header(session: CapturedSession) -> tuple[tuple[str, str], ...]:
+    """The bearer token as the SOLE authenticator header, or () if none.
+
+    Broken-auth isolates the TOKEN as the sole authenticator (no cookie), so a
+    route guarded by cookie rather than token cannot pass the control probe and
+    never yields a false positive.
+    """
+    if not session.bearer:
+        return ()
+    return (("Authorization", f"Bearer {session.bearer}"),)
+
+
+def broken_auth_principal_from_session(
+    session: CapturedSession,
+    *,
+    name: str = "authenticated",
+    role: str = "user",
+) -> BrokenAuthPrincipal:
+    """Build a broken-auth principal carrying ONLY the session's bearer token.
+
+    A session with no bearer yields a principal with no headers — the honest
+    failure mode: the seeder finds no genuine token, so it seeds no probe and
+    nothing is ever claimed.
+    """
+    return BrokenAuthPrincipal(
+        name=name,
+        headers=_bearer_header(session),
+        role=role,
+    )
+
+
+def broken_auth_policy_from_session(
+    policy: BrokenAuthPolicy,
+    session: CapturedSession,
+    *,
+    name: str = "authenticated",
+) -> BrokenAuthPolicy:
+    """
+    Bind a LIVE captured session's bearer token into a broken-auth matrix.
+
+    The operator matrix declares only *structure* (which routes must reject a
+    forged token, and the forgery strategy); the one credential this class needs —
+    a genuine bearer token to forge FROM — is supplied here from a real browser
+    login, never read from a file. The token is bound as the SOLE authenticator
+    (Authorization only, no cookie). A session with no bearer leaves the principal
+    tokenless, so the control probe cannot succeed and the judge returns
+    INCONCLUSIVE rather than a manufactured finding.
+    """
+    role = policy.principal.role if policy.principal is not None else "user"
+    principal_name = policy.principal.name if policy.principal is not None else name
+    principal = BrokenAuthPrincipal(
+        name=principal_name,
+        headers=_bearer_header(session),
+        role=role,
+    )
+    return replace(policy, principal=principal)
 
 
 def session_headers(

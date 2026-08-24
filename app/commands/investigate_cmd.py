@@ -2149,6 +2149,227 @@ def _ssrf_remediation_panel(outcome) -> Panel:
     )
 
 
+def _broken_auth_matrix_panel(
+    policy, source: str, *, synthesized: bool = False
+) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "broken-auth matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered token-forgery probe(s)"
+            if synthesized
+            else "declared token-forgery probe(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        provable = check.forgery in ("alg_none", "unsigned")
+        tag = (
+            f"[{_C_OK}]guard-provable[/{_C_OK}]"
+            if provable
+            else f"[{_C_WARN}]signed → advisory[/{_C_WARN}]"
+        )
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[{_C_DIM}]MUST reject a forged token ·[/{_C_DIM}] "
+            f"[white]{check.method} {_short(check.path, 28)}[/white] "
+            f"[{_C_ACCENT}]{check.forgery}[/{_C_ACCENT}] {tag}"
+        )
+
+    note = Text(
+        (
+            "\nAuto-discovered surface — routes from live recon, the ONE live "
+            "input (a genuine bearer token to forge FROM) captured from the "
+            "authenticated session, never a file. "
+            if synthesized
+            else "\nGround truth only; the genuine token to forge FROM is captured "
+            "LIVE from the authenticated session, never a file. "
+        )
+        + "Each probe is decided by a three-probe differential on the live target: "
+        "a CONTROL probe (the genuine token as the SOLE authenticator → MUST "
+        "succeed, proving the route is token-authenticated and the session valid), "
+        "a BREACH probe (a token Sentinel MINTED → the validation-flaw probe), and "
+        "an anonymous BASELINE probe (no token → MUST be denied, ruling out a "
+        "public route). Broken auth is VALIDATED only when the genuine token works, "
+        "the forged token ALSO works, AND anonymous is denied — a bare status code "
+        "is never the verdict. Every forged payload carries a benign sentinel_forge "
+        "marker, so acceptance proves the server validated a token WE minted.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ BROKEN AUTH · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ BROKEN-AUTH MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _broken_auth_findings_panel(results) -> Panel:
+    """Render every broken-auth verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("forgery")
+    table.add_column("ctrl→forged", justify="center")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ validation holds",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        ctrl = "?" if probe.control_status_code is None else str(probe.control_status_code)
+        forged = "?" if probe.breach_status_code is None else str(probe.breach_status_code)
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.forgery, 18)}[/white]",
+            f"[{_C_DIM}]{ctrl}→{forged}[/{_C_DIM}]",
+            _short(probe.reason, 40),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} broken-auth flaw(s) reproduced against the live target — a "
+        f"token Sentinel MINTED was accepted where the genuine token works and an "
+        f"unauthenticated caller was denied — and CONFIRMED; a route that correctly "
+        f"rejects the forgery collapses to DISPROVED, and a route that is not "
+        f"token-authenticated (control fails) or is public (anonymous also accepted) "
+        f"collapses to INCONCLUSIVE. No finding is ever manufactured.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ BROKEN AUTH · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _broken_auth_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed broken-auth finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "ADVISORY_ONLY": _C_WARN,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "ADVISORY_ONLY": "▲ ADVISORY (signed forgery)",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+    # __BROKEN_AUTH_REMEDIATION_PANEL__
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[{_C_DIM}]refuse forged token ({rule.forgery}) on[/{_C_DIM}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 28)}[/white]",
+        )
+        provable = (
+            f"[{_C_OK}]yes (alg=none / unsigned shape)[/{_C_OK}]"
+            if rule.guard_provable
+            else f"[{_C_WARN}]no — validly signed, gateway-invisible[/{_C_WARN}]"
+        )
+        table.add_row("shape-guardable", provable)
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]pin the accepted JWT algorithms (reject 'none' / RS256→"
+            f"HS256 confusion) and verify the signature against the real key[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+    verification = outcome.verification
+    if verification is not None:
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ BROKEN-AUTH REMEDIATION · PATCH + PROVE[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]

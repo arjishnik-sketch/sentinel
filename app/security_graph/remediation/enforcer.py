@@ -459,6 +459,8 @@ class RequestGuardRule:
       query      -> the parameter is read from the URL query string
       body_form  -> the parameter is read from an urlencoded request body
       body_json  -> the parameter is a top-level key of a JSON request body
+      header     -> the parameter names a request header (e.g. Authorization);
+                    empty `param` inspects every header value
 
     `signature_family` selects the payload-shape family to block — one guard,
     many vulnerability classes:
@@ -487,13 +489,43 @@ class RequestGuardRule:
     allow: tuple = ()
 
 
+def _header_candidate_values(rule: "RequestGuardRule", headers) -> list[str]:
+    """Pure: the request-header values a guard rule must inspect.
+
+    `headers` is either an ``http.client.HTTPMessage`` (real server request, where
+    a header may legitimately repeat, so ``get_all`` is used) or a plain mapping
+    (unit tests). An empty ``rule.param`` inspects every header value.
+    """
+    values: list[str] = []
+    if headers is None:
+        return values
+
+    get_all = getattr(headers, "get_all", None)
+    if rule.param:
+        if callable(get_all):
+            found = get_all(rule.param, [])
+            values.extend(str(v) for v in found)
+        else:
+            wanted = rule.param.lower()
+            for key, val in headers.items():
+                if str(key).lower() == wanted:
+                    values.append(str(val))
+    else:
+        for _key, val in headers.items():
+            values.append(str(val))
+    return values
+
+
 def _guard_candidate_values(
     rule: "RequestGuardRule",
     query: str,
     body: bytes | None,
+    headers=None,
 ) -> list[str]:
     """Pure: the parameter values a guard rule must inspect for this request."""
     values: list[str] = []
+    if rule.location == "header":
+        return _header_candidate_values(rule, headers)
     if rule.location == "query":
         parsed = parse_qs(query or "", keep_blank_values=True)
         source = parsed
@@ -521,17 +553,17 @@ def _guard_candidate_values(
     return values
 
 
-def evaluate_request_guard(method, path, query, body, guard_rules) -> str:
+def evaluate_request_guard(method, path, query, body, guard_rules, headers=None) -> str:
     """
     Pure request-side decision for the request-guard virtual patch.
 
     Returns ``"deny"`` when any guard rule matches this method+path and the
     guarded parameter value carries a signature from that rule's
     ``signature_family``, else ``"forward"``. It inspects only the REQUEST
-    (query/body), never a response, so it cannot manufacture a verdict — it only
-    refuses to relay a malicious request shape, which is exactly what collapses
-    the differential the pure judge then re-measures. One guard covers every
-    class (sqli / ssti / xss / traversal / url_allowlist / jwt).
+    (query/body/headers), never a response, so it cannot manufacture a verdict —
+    it only refuses to relay a malicious request shape, which is exactly what
+    collapses the differential the pure judge then re-measures. One guard covers
+    every class (sqli / ssti / xss / traversal / url_allowlist / jwt).
     """
     method_norm = (method or "").strip().upper()
     path_norm = path or ""
@@ -542,7 +574,7 @@ def evaluate_request_guard(method, path, query, body, guard_rules) -> str:
             continue
         family = getattr(rule, "signature_family", "sqli")
         allow = getattr(rule, "allow", ())
-        for value in _guard_candidate_values(rule, query, body):
+        for value in _guard_candidate_values(rule, query, body, headers):
             if _matches_signature(value, family, allow):
                 return "deny"
     return "forward"
@@ -624,6 +656,7 @@ class _EnforcementHandler(BaseHTTPRequestHandler):
                 split.query,
                 body,
                 server.guard_rules,
+                self.headers,
             )
             if guard == "deny":
                 _json_response(

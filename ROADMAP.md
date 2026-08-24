@@ -25,7 +25,7 @@
 | 9 | Open redirect | `open_redirect` | MEDIUM | **zero-oracle** | ✅ |
 | 10 | CORS misconfiguration | `cors_misconfig` | MEDIUM | **zero-config baseline** | ✅ |
 | 11 | Server-side request forgery | `ssrf` | HIGH | **zero-oracle (OOB)** | ✅ |
-| 12 | Broken auth / JWT | `broken_auth` | HIGH | hybrid (login-seeded) | 🔨 |
+| 12 | Broken auth / JWT | `broken_auth` | HIGH | hybrid (login-seeded) | ✅ |
 | ★ | **Provable chaining** | `chain` | — | artifact-driven | 🔨 |
 
 Five classes close the full **find → reason → prove → patch → prove** loop live.

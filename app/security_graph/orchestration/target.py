@@ -273,6 +273,18 @@ class TargetResearchPipeline:
             )
         )
 
+        # Broken-auth probe (kind `broken_auth_check`): replays a genuine / forged
+        # / absent token as the SOLE authenticator for the three-probe
+        # control/breach/baseline differential. No shared interpretation; the pure
+        # judge decides whether a token Sentinel minted was accepted.
+        from ..broken_auth.executor import BrokenAuthProbeExecutor
+
+        registry.register(
+            BrokenAuthProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

@@ -48,6 +48,9 @@ from .investigate_cmd import (
     _privesc_matrix_panel,
     _privesc_findings_panel,
     _privesc_remediation_panel,
+    _broken_auth_matrix_panel,
+    _broken_auth_findings_panel,
+    _broken_auth_remediation_panel,
     _gate_remediation,
 )
 
@@ -159,11 +162,14 @@ def _session_panel(session, target: str, login_url: str | None) -> Panel:
     )
 
 
-def _chain_panel(authz_confirmed, cookie_confirmed, privesc_confirmed=()) -> Panel:
+def _chain_panel(
+    authz_confirmed, cookie_confirmed, privesc_confirmed=(), broken_auth_confirmed=()
+) -> Panel:
     """Honest chaining view: co-occurring proven ingredients for one session."""
     have_authz = bool(authz_confirmed)
     have_cookie = bool(cookie_confirmed)
     have_privesc = bool(privesc_confirmed)
+    have_broken_auth = bool(broken_auth_confirmed)
 
     def _mark(ok: bool) -> str:
         return f"[{_C_OK}]✔[/{_C_OK}]" if ok else f"[{_C_DIM}]·[/{_C_DIM}]"
@@ -178,10 +184,15 @@ def _chain_panel(authz_confirmed, cookie_confirmed, privesc_confirmed=()) -> Pan
         f"{_mark(have_privesc)} privilege boundary crossed by this live session "
         f"[{_C_DIM}]({len(privesc_confirmed)} privilege_escalation "
         f"CONFIRMED)[/{_C_DIM}]",
+        f"{_mark(have_broken_auth)} forged token accepted where the genuine one "
+        f"works [{_C_DIM}]({len(broken_auth_confirmed)} broken_auth "
+        f"CONFIRMED)[/{_C_DIM}]",
     ]
     body = Text.from_markup("\n".join(lines))
 
-    proven_count = sum((have_authz, have_cookie, have_privesc))
+    proven_count = sum(
+        (have_authz, have_cookie, have_privesc, have_broken_auth)
+    )
     if proven_count >= 2:
         verdict = Text(
             "\nMultiple independently-PROVEN ingredients co-occur on this one "
@@ -588,10 +599,26 @@ def run(arg):
             _capture_additional,
         )
 
+    # --- BROKEN AUTHENTICATION (JWT forgery, Tier 3, hybrid) -------------
+    # The one honestly-labelled login-seeded/hybrid class: it needs ONE live
+    # input — a genuine bearer token to forge FROM, captured above, never a
+    # file. Given that token it forges (alg=none / unsigned / and, with operator
+    # material, signed) and runs the three-probe control/breach/baseline
+    # differential. With no captured JWT bearer, no forgery is derivable and the
+    # pass is honestly skipped.
+    broken_auth_confirmed = []
+    if result is not None:
+        broken_auth_confirmed = _run_broken_auth_pass(
+            result.graph, target, session, policy_path, skip_remediation,
+        )
+
     # --- CHAINING (honest ingredients) -----------------------------------
     console.print()
     console.print(
-        _chain_panel(authz_confirmed, cookie_confirmed, privesc_confirmed)
+        _chain_panel(
+            authz_confirmed, cookie_confirmed, privesc_confirmed,
+            broken_auth_confirmed,
+        )
     )
     console.print()
 
@@ -862,6 +889,218 @@ def _run_privesc_pass(
                 Text(str(exc), style=_C_BAD),
                 title=(
                     f"[{_C_BAD}]privilege escalation stage failed[/{_C_BAD}]"
+                ),
+                border_style=_C_BAD,
+            )
+        )
+        return []
+
+
+def _load_broken_auth_matrix(policy_path):
+    """
+    Resolve an operator BROKEN-AUTH MATRIX (structure only — never a token).
+
+    Source order: ``$SENTINEL_BROKEN_AUTH_POLICY`` (a dedicated matrix file),
+    else a ``broken_auth_matrix`` section embedded in the access-policy file.
+    Returns ``(policy_or_None, source_or_None)``; a file with no matrix yields
+    ``(None, None)`` and discovery synthesizes the surface from live recon.
+    """
+    import json
+
+    from app.security_graph.broken_auth import load_broken_auth_policy
+
+    source = os.environ.get("SENTINEL_BROKEN_AUTH_POLICY") or None
+    if source is None and policy_path:
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("broken_auth_matrix"):
+                source = policy_path
+        except Exception:  # noqa: BLE001 — a bad file is reported elsewhere
+            source = None
+    if not source:
+        return None, None
+    return load_broken_auth_policy(source), source
+
+
+def _broken_auth_material():
+    """
+    Optional operator material for the SIGNED-forgery strategies (advisory only).
+
+    ``$SENTINEL_JWT_PUBLIC_KEY`` (a PEM literal or a path to one) enables the
+    RS256→HS256 confusion probe; ``$SENTINEL_JWT_SECRETS`` (comma-separated
+    candidates or a path to a newline-delimited dictionary) enables the
+    weak-secret probe. Both are absent by default, so discovery synthesizes only
+    the guard-provable ``alg_none`` / ``unsigned`` strategies — the honest zero-
+    material default.
+    """
+    public_key = os.environ.get("SENTINEL_JWT_PUBLIC_KEY") or ""
+    if public_key and os.path.isfile(public_key):
+        try:
+            public_key = open(public_key, encoding="utf-8").read()
+        except Exception:  # noqa: BLE001
+            public_key = ""
+
+    raw_secrets = os.environ.get("SENTINEL_JWT_SECRETS") or ""
+    secrets: tuple[str, ...] = ()
+    if raw_secrets:
+        if os.path.isfile(raw_secrets):
+            try:
+                secrets = tuple(
+                    line.strip()
+                    for line in open(raw_secrets, encoding="utf-8")
+                    if line.strip()
+                )
+            except Exception:  # noqa: BLE001
+                secrets = ()
+        else:
+            secrets = tuple(s.strip() for s in raw_secrets.split(",") if s.strip())
+
+    return public_key, secrets
+
+# __BROKEN_AUTH_PASS__
+
+
+def _run_broken_auth_pass(
+    graph, target, first_session, policy_path, skip_remediation,
+):
+    """
+    Tier-3 hybrid class: prove JWT forgery acceptance on the live target.
+
+    The ONE live input — a genuine bearer token to forge FROM — comes from the
+    captured session, never a file. An operator ``broken_auth_matrix`` (structure
+    only) is used if present; otherwise the token-forgery surface is SYNTHESIZED
+    from live recon (guard-provable ``alg_none`` / ``unsigned`` by default; the
+    signed strategies only when the operator supplies key/dictionary material).
+    Every check is decided by the three-probe control/breach/baseline
+    differential; a route not token-authenticated (or public) goes INCONCLUSIVE —
+    never a manufactured finding. Returns the CONFIRMED broken-auth findings.
+    """
+    from app.security_graph.broken_auth import (
+        run_broken_auth_investigation,
+        synthesize_broken_auth_policy,
+    )
+    from app.security_graph.session import (
+        broken_auth_policy_from_session,
+        broken_auth_principal_from_session,
+    )
+
+    matrix, source = _load_broken_auth_matrix(policy_path)
+    synthesized = False
+    if matrix is not None and matrix.checks:
+        live_policy = broken_auth_policy_from_session(matrix, first_session)
+    else:
+        synthesized = True
+        public_key, secrets = _broken_auth_material()
+        principal = broken_auth_principal_from_session(first_session)
+        discovery = synthesize_broken_auth_policy(
+            graph,
+            principal=principal,
+            public_key=public_key,
+            secret_candidates=secrets,
+        )
+        live_policy = discovery.policy
+        source = discovery.note
+
+    console.print()
+    console.print(
+        Rule(
+            f"[bold {_C_ACCENT}]BROKEN AUTHENTICATION · "
+            f"JWT FORGERY[/bold {_C_ACCENT}]",
+            style=_C_ACCENT,
+        )
+    )
+
+    if not live_policy.checks:
+        console.print(
+            Text(
+                "  the captured session carries no JWT bearer to forge from (or "
+                "no forgery is derivable) — no broken-auth probe is synthesized "
+                "and nothing is claimed (honest differential).",
+                style=_C_DIM,
+            )
+        )
+        return []
+
+    console.print(
+        _broken_auth_matrix_panel(live_policy, source or "operator matrix",
+                                  synthesized=synthesized)
+    )
+    # __BROKEN_AUTH_PASS_BODY__
+
+    try:
+        with console.status(
+            f"[{_C_ACCENT}]forging tokens + running control/breach/baseline "
+            f"differential live…[/{_C_ACCENT}]",
+            spinner="dots",
+        ):
+            broken_auth_results = run_broken_auth_investigation(
+                graph, live_policy, target_base=target
+            )
+        if broken_auth_results:
+            console.print(_broken_auth_findings_panel(broken_auth_results))
+
+        broken_auth_confirmed = list(
+            graph.findings_for(kind="broken_auth", status="OPEN")
+        )
+        if broken_auth_confirmed and not skip_remediation:
+            from app.security_graph.broken_auth import (
+                remediate_broken_auth_findings,
+                synthesize_broken_auth_remediation,
+            )
+            from app.commands.remediation_gate import RemediationProposal
+
+            console.print()
+            console.print(
+                Rule(
+                    f"[bold {_C_OK}]BROKEN-AUTH REMEDIATION · PATCH + PROVE · "
+                    f"{len(broken_auth_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                    style=_C_OK,
+                )
+            )
+            proposals = []
+            for finding in broken_auth_confirmed:
+                plan = synthesize_broken_auth_remediation(graph, finding)
+                if plan is None:
+                    control = "jwt shape-guard (no plan derived)"
+                elif plan.rule.guard_provable:
+                    control = (
+                        f"jwt shape-guard: refuse forged token "
+                        f"({plan.rule.forgery}) → {plan.rule.method} "
+                        f"{plan.rule.path}"
+                    )
+                else:
+                    control = (
+                        f"ADVISORY (signed {plan.rule.forgery}): pin algorithms + "
+                        f"verify signature handler-side"
+                    )
+                proposals.append(
+                    RemediationProposal(
+                        title=finding.title,
+                        severity=finding.severity,
+                        control=control,
+                    )
+                )
+            if _gate_remediation(
+                class_label="broken authentication",
+                color=_C_OK,
+                proposals=proposals,
+            ):
+                with console.status(
+                    f"[{_C_OK}]standing up the jwt shape-guard + proving the "
+                    f"forgery is refused…[/{_C_OK}]",
+                    spinner="dots",
+                ):
+                    broken_auth_outcomes = remediate_broken_auth_findings(graph)
+                for remediation in broken_auth_outcomes:
+                    console.print(_broken_auth_remediation_panel(remediation))
+        return broken_auth_confirmed
+    except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+        console.print(
+            Panel(
+                Text(str(exc), style=_C_BAD),
+                title=(
+                    f"[{_C_BAD}]broken authentication stage failed[/{_C_BAD}]"
                 ),
                 border_style=_C_BAD,
             )
