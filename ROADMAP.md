@@ -19,12 +19,12 @@
 | 3 | Insecure cookies | `insecure_cookie` | MEDIUM | zero-config baseline | ✅ |
 | 4 | Privilege escalation | `privilege_escalation` | HIGH | oracle/login-required | ✅ |
 | 5 | SQL injection | `injection` | HIGH | **zero-oracle (synth)** | ✅ |
-| 6 | Template injection (SSTI) | `template_injection` | HIGH | **zero-oracle** | 🔨 |
+| 6 | Template injection (SSTI) | `template_injection` | HIGH | **zero-oracle** | ✅ |
 | 7 | Cross-site scripting (XSS) | `xss` | HIGH | **zero-oracle** | 🔨 |
 | 8 | Path traversal / LFI | `path_traversal` | HIGH | **zero-oracle** | 🔨 |
-| 9 | Open redirect | `open_redirect` | MEDIUM | **zero-oracle** | 🔨 |
-| 10 | CORS misconfiguration | `cors_misconfig` | MEDIUM | **zero-config baseline** | 🔨 |
-| 11 | Server-side request forgery | `ssrf` | HIGH | **zero-oracle (OOB)** | 🔨 |
+| 9 | Open redirect | `open_redirect` | MEDIUM | **zero-oracle** | ✅ |
+| 10 | CORS misconfiguration | `cors_misconfig` | MEDIUM | **zero-config baseline** | ✅ |
+| 11 | Server-side request forgery | `ssrf` | HIGH | **zero-oracle (OOB)** | ✅ |
 | 12 | Broken auth / JWT | `broken_auth` | HIGH | hybrid (login-seeded) | 🔨 |
 | ★ | **Provable chaining** | `chain` | — | artifact-driven | 🔨 |
 
