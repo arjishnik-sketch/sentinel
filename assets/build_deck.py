@@ -152,7 +152,7 @@ SLIDES += [
             "Local-first AI agent that reasons about live web targets",
             "A status code is never a verdict — a deterministic judge decides",
             "Proven end-to-end on two independent live stacks",
-            "Five vulnerability classes, each closing the full loop",
+            "Ten vulnerability classes, each closing the full loop live",
             "Every decision explainable, auditable, and scope-guarded",
         ],
         "notes": (
@@ -276,7 +276,7 @@ SLIDES += [
         "bullets": [
             "Security graph: hosts, resources, principals, evidence, findings",
             "Pre-connection scope guard refuses out-of-scope probes",
-            "A pure judge per class: authz, posture, cookies, privesc, injection",
+            "Ten pure judges: authz · posture · cookies · privesc · SQLi · SSTI · redirect · CORS · SSRF · JWT",
             "RemediationEnforcer: an ephemeral loopback reverse-proxy shield",
             "Local model via Ollama (qwen3:4b) — no cloud, no data egress",
         ],
@@ -356,10 +356,10 @@ SLIDES += [
     },
 ]
 SLIDES += [
-    {"kind": "divider", "title": "Five Vulnerability Classes",
+    {"kind": "divider", "title": "Ten Vulnerability Classes",
      "subtitle": "Each closes the full find → patch → prove loop, live",
-     "notes": "Sentinel is not a one-trick demo. Five independent classes each run the entire "
-              "loop end-to-end against live targets."},
+     "notes": "Sentinel is not a one-trick demo. Ten independent classes each run the entire "
+              "loop end-to-end against live targets — every one gated by the same epistemic contract."},
     {
         "title": "Class 1 — Broken Access Control",
         "subtitle": "authorization_policy_violation",
@@ -449,6 +449,43 @@ SLIDES += [
             "and the judge re-proves."
         ),
     },
+    {
+        "title": "Classes 6–10 — Five More, Same Contract",
+        "subtitle": "Every class is its own differential with an explicit anchor",
+        "bullets": [
+            ("cyan", "SSTI — {{7*7}} evaluates to 49 vs the literal; behaviour, not a regex"),
+            ("cyan", "Open redirect — two-probe host differential; off-origin host OBSERVED, never followed"),
+            ("cyan", "CORS — two-probe Origin differential; nonce origin reflected AND credentialed"),
+            ("cyan", "SSRF — out-of-band callback to Sentinel's OWN loopback collaborator"),
+            ("cyan", "Broken auth / JWT — three-probe genuine · forged · absent token differential"),
+        ],
+        "notes": (
+            "Coverage doubled without loosening the bar. SSTI confirms only when injected arithmetic "
+            "actually evaluates; open-redirect and CORS each ride a two-probe differential against an "
+            "unroutable nonce that is observed or echoed but never contacted; SSRF proves the fetch by "
+            "an out-of-band callback to Sentinel's own loopback beacon; broken-auth replays a genuine, "
+            "a forged, and an absent token. Ten classes, one contract."
+        ),
+    },
+    {
+        "title": "The Hardest Two, Done Honestly",
+        "subtitle": "Zero-oracle SSRF · token forgery — and where we stop",
+        "bullets": [
+            ("cyan", "SSRF is zero-oracle: only Sentinel's own 127.0.0.1 collaborator is ever injected"),
+            ("cyan", "— never a metadata IP, an RFC-1918 host, or any third party"),
+            ("cyan", "Broken auth: a forged token as SOLE authenticator must be accepted to CONFIRM"),
+            ("ok", "Every forgery carries a benign marker — acceptance proves OUR minted token passed"),
+            ("warn", "alg-none → full PATCH+PROVE; signed-forgery classes → ADVISORY_ONLY, never a fake fix-proof"),
+        ],
+        "notes": (
+            "The two most sophisticated classes are also where honesty matters most. SSRF needs no "
+            "operator oracle — the only URL Sentinel ever injects is its own loopback collaborator, so a "
+            "callback is unambiguous and safe. Broken-auth confirms only when a token Sentinel itself "
+            "minted (carrying a benign marker) is accepted as the sole authenticator. And when a fix "
+            "cannot be proven by a request-guard — HS256-confusion or a cracked weak secret — Sentinel "
+            "returns ADVISORY_ONLY with the durable handler-side fix, rather than manufacturing a fix-proof."
+        ),
+    },
 ]
 SLIDES += [
     {
@@ -506,10 +543,10 @@ SLIDES += [
     {
         "title": "Test Results & Validation",
         "subtitle": "Green, deterministic, and honest about the one skip",
-        "stats": [("123", "tests"), ("122", "passing"), ("5", "vuln classes"),
+        "stats": [("255", "tests"), ("254", "passing"), ("10", "vuln classes"),
                   ("2", "live stacks")],
         "bullets": [
-            ("ok", "122 passing, 1 skipped (the opt-in live-browser path)"),
+            ("ok", "254 passing, 1 skipped (the opt-in live-browser path)"),
             ("ok", "Full offline suite is network-free and runs in seconds"),
             ("ok", "Each class: parse → CONFIRM → PATCH → PROVE, plus isolation"),
             ("ok", "Live E2E validated on Juice Shop and VAmPI over real sockets"),
@@ -595,16 +632,16 @@ SLIDES += [
         "title": "Status & Roadmap",
         "subtitle": "Honest today; a clear path to more",
         "bullets": [
-            ("ok", "Today: 5 classes live end-to-end on 2 stacks; 122 tests"),
+            ("ok", "Today: 10 classes live end-to-end on 2 stacks; 254 tests"),
             ("ok", "Today: Login Tester + authenticated reasoning + chaining ingredients"),
-            ("next", "Next: full causal chaining (compose proven ingredients)"),
-            ("next", "Next: more OWASP classes (SSRF, XSS, mass assignment)"),
+            ("next", "Next: provable 2-link chaining (SQLi ⇒ IDOR), decoy-gated"),
+            ("next", "Next: the last two OWASP classes — reflected XSS + path traversal"),
             ("next", "Next: CI/CD gate + policy library for common stacks"),
         ],
         "notes": (
-            "We're candid about the line between done and next. Five classes, two targets, the "
-            "Login Tester, and chaining ingredients ship today; full causal chaining, more "
-            "classes, and a CI gate are the roadmap."
+            "We're candid about the line between done and next. Ten classes, two targets, the "
+            "Login Tester, and chaining ingredients ship today; provable 2-link chaining, the last "
+            "two OWASP classes (reflected XSS + path traversal), and a CI gate are the roadmap."
         ),
     },
 ]
@@ -612,9 +649,9 @@ SLIDES += [
     {
         "title": "The Ask",
         "subtitle": "$1M to turn a proven engine into a platform",
-        "stats": [("$1M", "seed"), ("18", "months runway"), ("5→8", "vuln classes")],
+        "stats": [("$1M", "seed"), ("18", "months runway"), ("10→12+", "vuln classes")],
         "bullets": [
-            ("cyan", "Engineering: full chaining + the next OWASP classes"),
+            ("cyan", "Engineering: provable chaining + the last OWASP classes"),
             ("cyan", "Policy library: ready-made oracles for common stacks"),
             ("cyan", "Integrations: CI/CD gate, ticketing, SIEM export"),
             ("cyan", "Design partners: regulated, air-gap-first customers"),
