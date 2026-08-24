@@ -31,6 +31,7 @@ from .chain_finding import (
 from .artifacts import extract_artifacts
 from .consume import DEFAULT_PLACEHOLDER, decoy_value, inject_artifact
 from .compose import BolaChainTarget, compose_chains
+from .chain_policy import ChainPolicy, load_chain_targets, parse_chain_targets
 
 __all__ = [
     "ChainArtifact",
@@ -44,4 +45,7 @@ __all__ = [
     "inject_artifact",
     "BolaChainTarget",
     "compose_chains",
+    "ChainPolicy",
+    "load_chain_targets",
+    "parse_chain_targets",
 ]

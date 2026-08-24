@@ -448,8 +448,19 @@ chaining/
                   #   emit ChainFinding only when edge_proven
   chain_finding.py# ChainFinding(links=[A,B], artifact_kind, proof=(real,decoy),
                   #   severity=max(A,B) escalated one step)
+  chain_policy.py # parse/load_chain_targets(doc) -> ChainPolicy(targets, source_kind)
+                  #   PURE DATA: the operator declares link-2's downstream object
+                  #   route + captured attacker session (the honest hybrid input),
+                  #   like privesc_policy. Empty => "no chaining pass requested".
   __init__.py
 ```
+
+**CLI-wired (✅).** `investigate_cmd.py` renders `_chain_matrix_panel` +
+`_chain_findings_panel` and runs a CAPSTONE stage after the SSRF pass (before
+the final outcome panel), gated on declared `chain_targets` (a section of the
+combined policy file, or `SENTINEL_CHAIN_POLICY`) AND a CONFIRMED source finding
+proven earlier in the SAME run. When no edge survives the decoy wall it says so
+honestly rather than manufacturing a chain. Template: `samples/chain_targets.example.json`.
 
 The composer **reuses each class's existing run/judge unchanged** — it is an
 orchestrator over proven parts, holding zero new verdict logic. A `ChainFinding`

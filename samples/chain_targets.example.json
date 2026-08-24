@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "GENERIC, DEPLOYMENT-ORIENTED provable-chaining template (SQLi ⇒ IDOR/BOLA). EXTERNAL GROUND TRUTH an operator supplies for THEIR OWN target — the Sentinel engine holds zero knowledge of any host, route, or account. Chaining is the honestly-labeled HYBRID exception to Sentinel's URL-only discover story: LINK 1 (the SQL injection) is discovered live from the URL alone during the injection pass; LINK 2 needs a GENUINE captured attacker session to prove the downstream object boundary is actually crossed, so that session and the object route are declared HERE as operator ground truth — never synthesised, never guessed. Load standalone via `SENTINEL_CHAIN_POLICY=samples/chain_targets.example.json ./sentinel investigate <target>`, or paste this `chain_targets` section into your combined access-policy file so one file drives every class. The composer owns ZERO verdict logic: it reuses the privilege-escalation class's UNCHANGED pure judge on a fresh scratch graph. An edge A⇒B is emitted ONLY when (1) a CONFIRMED injection's OWN dumped body leaks an object id, (2) substituting that id into `breach.path_template` makes the downstream judge fire VALIDATED, AND (3) the DECOY WALL holds — a same-shaped but DIFFERENT id is DENIED, proving the edge is load-bearing on the specific leaked identifier and not on a route that answers for anything. Nothing is ever manufactured; a merely-leaked id whose object is not reachable yields NO chain. Replace every placeholder below with your target's real captured session and object route.",
+  "chain_targets": {
+    "source_kind": "injection",
+    "targets": [
+      {
+        "breach": { "method": "GET", "path_template": "/rest/basket/{id}" },
+        "placeholder": "{id}",
+        "attacker_headers": {
+          "Authorization": "Bearer REPLACE-WITH-ATTACKER-TOKEN",
+          "Cookie": "session=REPLACE-WITH-ATTACKER-SESSION"
+        },
+        "control": { "method": "GET", "path": "/rest/basket/REPLACE-WITH-ATTACKERS-OWN-OBJECT" },
+        "victim": "victim",
+        "severity": "HIGH",
+        "artifact_kind": "leaked_object_id",
+        "rationale": "The injection pass dumped a result set that leaked OTHER objects' ids. Each leaked id is substituted into `breach.path_template` and replayed AS the attacker (its captured session). `control` is a route the attacker legitimately owns — a 2xx there proves the session is alive (the confound-eliminating liveness anchor the privesc judge reuses). CONFIRMED only if the control succeeds, the real leaked id unlocks the forbidden object, AND a same-shaped decoy id is denied. Severity escalates one rung above the worst link (HIGH ∧ HIGH → CRITICAL). The durable fix is the SAME object-level ownership check the standalone IDOR/BOLA finding prescribes — chaining does not add a new patch, it proves the two boundaries compose into a single unauthenticated path."
+      }
+    ]
+  }
+}

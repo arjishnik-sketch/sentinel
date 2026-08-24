@@ -28,13 +28,17 @@ from app.security_graph.injection import (
 from app.security_graph.chaining import (
     BolaChainTarget,
     ChainFinding,
+    ChainPolicy,
     compose_chains,
     decoy_value,
     escalate,
     extract_artifacts,
     inject_artifact,
     max_severity,
+    parse_chain_targets,
 )
+
+import pytest
 
 
 TARGET_BASE = "http://127.0.0.1:3000"
@@ -349,3 +353,93 @@ def test_compose_requires_placeholder_in_template():
         executor=_make_bola_executor(_grant_specific_idor),
     )
     assert chains == []
+
+
+# --- chain-targets DATA parser (pure, target-agnostic) ----------------------
+
+def _target_doc():
+    return {
+        "chain_targets": {
+            "source_kind": "injection",
+            "targets": [
+                {
+                    "breach": {"method": "GET", "path_template": BASKET_TEMPLATE},
+                    "attacker_headers": {"Authorization": "Bearer chain-token"},
+                    "control": {"method": "GET", "path": CONTROL_PATH},
+                    "victim": "victim",
+                    "severity": "HIGH",
+                }
+            ],
+        }
+    }
+
+
+def test_parse_chain_targets_builds_bola_targets():
+    policy = parse_chain_targets(_target_doc())
+    assert isinstance(policy, ChainPolicy)
+    assert policy.source_kind == "injection"
+    assert len(policy.targets) == 1
+    target = policy.targets[0]
+    assert target.breach_path_template == BASKET_TEMPLATE
+    assert target.attacker_headers == (("Authorization", "Bearer chain-token"),)
+    assert target.control_path == CONTROL_PATH
+    assert target.breach_method == "GET"
+    assert target.victim == "victim"
+    assert target.severity == "HIGH"
+    assert target.placeholder == "{id}"
+
+
+def test_parse_chain_targets_end_to_end_proves_chain():
+    # The parsed operator DATA drives the SAME composer as the hand-built target.
+    graph = _confirmed_injection_graph()
+    policy = parse_chain_targets(_target_doc())
+    chains = compose_chains(
+        graph,
+        bola_targets=policy.targets,
+        target_base=TARGET_BASE,
+        executor=_make_bola_executor(_grant_specific_idor),
+        source_kind=policy.source_kind,
+    )
+    assert len(chains) == 1
+    assert chains[0].artifact.value == VICTIM_ID
+
+
+def test_parse_chain_targets_empty_when_not_requested():
+    assert parse_chain_targets({}).targets == ()
+    assert parse_chain_targets({"chain_targets": {"targets": []}}).targets == ()
+
+
+def test_parse_chain_targets_accepts_header_pair_list():
+    doc = _target_doc()
+    doc["chain_targets"]["targets"][0]["attacker_headers"] = [
+        ["Authorization", "Bearer chain-token"],
+        ["X-Tenant", "7"],
+    ]
+    policy = parse_chain_targets(doc)
+    assert policy.targets[0].attacker_headers == (
+        ("Authorization", "Bearer chain-token"),
+        ("X-Tenant", "7"),
+    )
+
+
+def test_parse_chain_targets_rejects_template_without_placeholder():
+    doc = _target_doc()
+    doc["chain_targets"]["targets"][0]["breach"]["path_template"] = (
+        "/rest/basket/2"
+    )
+    with pytest.raises(ValueError, match="placeholder"):
+        parse_chain_targets(doc)
+
+
+def test_parse_chain_targets_rejects_missing_control():
+    doc = _target_doc()
+    del doc["chain_targets"]["targets"][0]["control"]
+    with pytest.raises(ValueError, match="control"):
+        parse_chain_targets(doc)
+
+
+def test_parse_chain_targets_rejects_bad_severity():
+    doc = _target_doc()
+    doc["chain_targets"]["targets"][0]["severity"] = "SPICY"
+    with pytest.raises(ValueError, match="severity"):
+        parse_chain_targets(doc)

@@ -2793,6 +2793,112 @@ def _broken_auth_remediation_panel(outcome) -> Panel:
     )
 
 
+def _chain_matrix_panel(policy, source: str) -> Panel:
+    """Render the operator-declared downstream chain targets (link 2 of a chain)."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "chain targets",
+        f"[{_C_ACCENT}]{len(policy.targets)}[/{_C_ACCENT}] declared "
+        f"downstream object route(s) · source link = "
+        f"[white]{policy.source_kind}[/white]",
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for target in policy.targets[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(target.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{target.severity:<8}[/{sev_style}] "
+            f"[{_C_DIM}]leaked id ⇒ MUST NOT unlock ·[/{_C_DIM}] "
+            f"[white]{target.breach_method} "
+            f"{_short(target.breach_path_template, 34)}[/white] "
+            f"[{_C_DIM}]· live-anchor {_short(target.control_path, 18)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        "\nProvable chaining — the capstone over the single-class prove-chains. "
+        "Chaining is the honestly-labeled hybrid: link 1 (the SQL injection) is "
+        "discovered live from the URL alone; link 2 needs a GENUINE captured "
+        "attacker session to prove the object boundary is crossed, so that "
+        "session is declared here as operator ground truth — never synthesised. "
+        "The composer owns ZERO verdict logic: it reuses the privilege-escalation "
+        "class's UNCHANGED pure judge on a fresh scratch graph. An edge A⇒B is "
+        "emitted ONLY when a CONFIRMED injection's OWN leaked body yields an "
+        "object id, that id makes the downstream judge fire VALIDATED, AND the "
+        "DECOY WALL holds — a same-shaped but different id does NOT validate, "
+        "proving the edge is load-bearing on the specific leaked identifier and "
+        "not on a route that answers for anything. Nothing is ever manufactured.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=f"[{_C_ACCENT}]▐ CHAIN TARGETS · SQLi ⇒ IDOR/BOLA[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _chain_findings_panel(chains) -> Panel:
+    """Render every proven attack chain (each already past the decoy wall)."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("chain")
+    table.add_column("severity")
+    table.add_column("leaked id")
+    table.add_column("decoy", justify="right")
+    table.add_column("unlocked route")
+
+    for chain in chains:
+        link_kinds = " ⇒ ".join(link.kind for link in chain.links)
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(chain.severity, _C_WARN)
+        table.add_row(
+            f"[{_C_BAD}]● PROVEN[/{_C_BAD}] [{_C_DIM}]{link_kinds}[/{_C_DIM}]",
+            f"[bold {sev_style}]{chain.severity}[/bold {sev_style}]",
+            f"[white]{_short(chain.artifact.value, 18)}[/white] "
+            f"[{_C_DIM}]({_short(chain.artifact.locator or '—', 14)})[/{_C_DIM}]",
+            f"[{_C_OK}]{chain.decoy_status}[/{_C_OK}]",
+            f"[white]{_short(chain.breach_path, 34)}[/white]",
+        )
+
+    note = Text(
+        f"\n{len(chains)} attack chain(s) PROVEN end-to-end. Each: a CONFIRMED "
+        f"SQL injection leaked a real object id from its OWN dumped result set, "
+        f"that id made the privilege-escalation judge fire VALIDATED on the "
+        f"downstream object, AND a same-shaped decoy id was denied — so the edge "
+        f"is load-bearing on the leaked identifier, not on a route that answers "
+        f"for any input. Severity escalates one rung above the worst link. No "
+        f"leaked id whose object is not actually reachable, and no route that "
+        f"answers for any id, ever yields a chain.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ PROVEN CHAINS · DECOY WALL HELD[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -2849,6 +2955,8 @@ def run(arg, *, discover_mode=False):
             f"'privesc_matrix' section, or via $SENTINEL_PRIVESC_POLICY[/dim]\n"
             f"[dim]sql-injection (boolean differential) lives in an "
             f"'injection_matrix' section, or via $SENTINEL_INJECTION_POLICY[/dim]\n"
+            f"[dim]provable chaining (SQLi ⇒ IDOR/BOLA) downstream targets live "
+            f"in a 'chain_targets' section, or via $SENTINEL_CHAIN_POLICY[/dim]\n"
             f"[dim]with no policy, header + cookie passes run off a built-in "
             f"secure baseline; set $SENTINEL_NO_BASELINE=1 to disable it[/dim]\n"
             f"[dim]set $SENTINEL_SKIP_REMEDIATION=1 to skip the "
@@ -4474,6 +4582,121 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]ssrf stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # Capstone. Provable attack chaining (SQLi ⇒ IDOR/BOLA). Unlike every class
+    # above, this owns ZERO verdict logic — it composes findings already proven
+    # this run. Link 1 (a CONFIRMED injection) is discovered live from the URL
+    # alone; link 2 needs a GENUINE captured attacker session, so the downstream
+    # object route + that session arrive as operator DATA (the honestly-labeled
+    # hybrid exception to the URL-only story), in a `chain_targets` section of
+    # the policy file or a dedicated file via $SENTINEL_CHAIN_POLICY. An edge is
+    # emitted ONLY when the leaked id makes the UNCHANGED privesc judge fire
+    # VALIDATED and a same-shaped decoy id does NOT (the decoy wall). Nothing is
+    # ever manufactured.
+    chain_policy = None
+    chain_source = os.environ.get("SENTINEL_CHAIN_POLICY") or None
+    if chain_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("chain_targets"):
+                chain_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            chain_source = None
+
+    if chain_source:
+        from app.security_graph.chaining import load_chain_targets
+
+        try:
+            chain_policy = load_chain_targets(chain_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load chain targets '{chain_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]chain targets error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            chain_policy = None
+
+    if chain_policy is not None and chain_policy.targets:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]CAPSTONE · PROVABLE CHAINING · "
+                f"SQLi ⇒ IDOR/BOLA[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(_chain_matrix_panel(chain_policy, chain_source))
+        try:
+            from app.security_graph.chaining import compose_chains
+
+            source_findings = result.graph.findings_for(
+                kind=chain_policy.source_kind, status="OPEN"
+            )
+            if not source_findings:
+                console.print(
+                    Panel(
+                        Text(
+                            f"No CONFIRMED {chain_policy.source_kind} finding to "
+                            f"chain from — link 1 was not proven this run, so no "
+                            f"edge is even attempted. Honest by construction: a "
+                            f"chain is only ever composed from findings already "
+                            f"proven by their own pure judge.",
+                            style=_C_DIM,
+                        ),
+                        title=f"[{_C_DIM}]▐ NO SOURCE LINK[/{_C_DIM}]",
+                        border_style=_C_DIM,
+                        padding=(1, 2),
+                    )
+                )
+            else:
+                with console.status(
+                    f"[{_C_ACCENT}]extracting leaked ids → substituting into the "
+                    f"downstream BOLA probe → judging real + decoy on the live "
+                    f"target…[/{_C_ACCENT}]",
+                    spinner="dots",
+                ):
+                    chains = compose_chains(
+                        result.graph,
+                        bola_targets=chain_policy.targets,
+                        target_base=result.target,
+                        source_kind=chain_policy.source_kind,
+                    )
+                if chains:
+                    console.print(_chain_findings_panel(chains))
+                else:
+                    console.print(
+                        Panel(
+                            Text(
+                                "A confirmed injection leaked candidate id(s), but "
+                                "NO edge survived the decoy wall: either the "
+                                "downstream object boundary held (the real leaked "
+                                "id was denied too) or the route answered for a "
+                                "same-shaped decoy as well (not load-bearing on the "
+                                "leaked value). No chain is claimed — a merely-"
+                                "leaked id is never a false positive here.",
+                                style=_C_DIM,
+                            ),
+                            title=f"[{_C_OK}]▐ NO PROVEN CHAIN · WALL HELD[/{_C_OK}]",
+                            border_style=_C_OK,
+                            padding=(1, 2),
+                        )
+                    )
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]chaining capstone failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )
