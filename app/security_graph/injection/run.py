@@ -28,7 +28,7 @@ from ..analysis import apply_validation_judgment, materialize_confirmed_findings
 from ..graph import SecurityGraph
 from ..models import Experiment, Hypothesis, HttpRequestSpec, ValidationJudgment
 from .executor import InjectionProbeExecutor
-from .injection_policy import InjectionPolicy, boolean_payload_pairs
+from .injection_policy import InjectionPolicy, boolean_payload_pairs, quote_parity_payloads
 from .judge import InjectionExpectation, injection_expectation, judge_injection
 from .seed import seed_injection_policy
 
@@ -173,11 +173,30 @@ def _probe_and_judge(
         )
         pair_ids.append((true_id, false_id))
 
+    # Error-based (quote-parity) probes: odd-quote (breaks a SQL string literal)
+    # vs balanced even-quote (restores it). The judge uses these only if no
+    # boolean pair toggled, so a parameter interpolated into a string literal
+    # (the common case a single-point boolean payload misses) is still provable.
+    parity_ids: list[tuple[str, str]] = []
+    for index, (odd_value, even_value) in enumerate(
+        quote_parity_payloads(expectation.baseline_value)
+    ):
+        odd_id, _ = _run_probe(
+            graph, executor, hypothesis, expectation,
+            tag=f"oddquote-{index}", value=odd_value,
+        )
+        even_id, _ = _run_probe(
+            graph, executor, hypothesis, expectation,
+            tag=f"evenquote-{index}", value=even_value,
+        )
+        parity_ids.append((odd_id, even_id))
+
     judgment = judge_injection(
         graph,
         hypothesis=hypothesis,
         baseline_experiment_id=baseline_id,
         pair_experiment_ids=tuple(pair_ids),
+        parity_experiment_ids=tuple(parity_ids),
     )
     return judgment, baseline_code
 

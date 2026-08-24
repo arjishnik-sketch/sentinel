@@ -279,6 +279,12 @@ _SQLI_SIGNATURES = (
     re.compile(r"""\bunion\b(\s+all)?\s+\bselect\b""", re.IGNORECASE),
     # SQL comment / statement terminators used to truncate the original query
     re.compile(r"""(--\s|#|/\*)"""),
+    # a raw SQL string-literal quote — the atomic breakout character behind
+    # error-based / quote-parity injection (an unbalanced quote breaks the
+    # literal). A parameter concatenated into a SQL string has no legitimate need
+    # to carry a bare quote, so blocking it collapses the odd-breaks/even-restores
+    # differential too (both the odd and even payloads are refused).
+    re.compile(r"""['"]"""),
 )
 
 # Template injection (SSTI) — server-side template expression delimiters.

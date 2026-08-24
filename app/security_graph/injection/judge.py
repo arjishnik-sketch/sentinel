@@ -146,13 +146,23 @@ def judge_injection(
     hypothesis: Hypothesis,
     baseline_experiment_id: str,
     pair_experiment_ids: tuple[tuple[str, str], ...],
+    parity_experiment_ids: tuple[tuple[str, str], ...] = (),
 ) -> ValidationJudgment:
-    """Decide whether the boolean differential proves a SQL injection.
+    """Decide whether the differential proves a SQL injection.
 
     ``pair_experiment_ids`` is a tuple of ``(true_experiment_id,
     false_experiment_id)`` pairs; each pair's two probes were built from
     length-matched payloads, so a difference between them cannot come from a
     reflected payload.
+
+    ``parity_experiment_ids`` is a tuple of ``(odd_quote_experiment_id,
+    even_quote_experiment_id)`` pairs for the error-based arm: the odd probe
+    appended an unbalanced quote (breaks a SQL string literal → off the success
+    anchor) and the even probe appended a balanced pair (restores it → back on
+    the anchor). It is consulted only when no boolean pair toggled, so a
+    parameter interpolated into a string literal (the common real-world case a
+    single-point boolean payload misses) is still provable. Backward-compatible:
+    callers that pass no parity ids keep the original boolean-only behaviour.
     """
 
     identity = hypothesis.identity
@@ -251,12 +261,54 @@ def judge_injection(
                 evidence_ids=tuple(dict.fromkeys(evidence_ids)),
             )
 
-    if not any_pair_readable:
+    # ---- error-based (quote-parity) differential ----------------------------
+    # No boolean toggled the result set, but the parameter may still be provably
+    # injectable via SQL string-literal quote parity: appending a single
+    # unbalanced quote breaks the query (the backend leaves the success anchor),
+    # while a balanced pair of quotes keeps the literal well-formed (the response
+    # returns to the anchor). "Odd breaks / even restores" is backend-origin — a
+    # reflected value cannot change the STATUS by quote parity — and a generic
+    # quote-rejecting filter fails it (it rejects BOTH arms), so it never fires on
+    # a mere input filter. This catches the common case a single-injection-point
+    # boolean payload misses (e.g. a parameter interpolated more than once).
+    any_parity_readable = False
+    for odd_id, even_id in parity_experiment_ids:
+        odd = _fingerprint(graph, odd_id)
+        even = _fingerprint(graph, even_id)
+        if odd is None or even is None:
+            continue
+        any_parity_readable = True
+        odd_fp, odd_ev = odd
+        even_fp, even_ev = even
+        if odd_fp[0] not in success and even_fp[0] in success:
+            evidence_ids.extend([odd_ev, even_ev])
+            reason = (
+                f"a single appended quote broke the query on '{expectation.param}' "
+                f"({expectation.method} {expectation.path}) — status {odd_fp[0]} left "
+                f"the legitimate baseline {baseline_fp} — while a balanced pair of "
+                f"quotes restored a legitimate response {even_fp}: the parameter is "
+                "interpolated into a SQL string literal (odd-quote breaks it, even-"
+                "quote restores it — a reflected value cannot change status by quote "
+                "parity, and a generic quote filter would reject both arms), a real "
+                "SQL injection"
+            )
+            return ValidationJudgment(
+                hypothesis_id=hypothesis.id,
+                experiment_id=odd_id,
+                status="VALIDATED",
+                reason=reason,
+                contradiction_kind="injection",
+                expected=False,     # boundary: the param MUST NOT reach the query
+                observed=True,      # it did
+                evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+            )
+
+    if not any_pair_readable and not any_parity_readable:
         return ValidationJudgment(
             hypothesis_id=hypothesis.id,
             experiment_id=baseline_experiment_id,
             status="INCONCLUSIVE",
-            reason="no readable TRUE/FALSE probe pair for this hypothesis",
+            reason="no readable TRUE/FALSE or quote-parity probe pair for this hypothesis",
             contradiction_kind="injection",
         )
 
@@ -266,9 +318,11 @@ def judge_injection(
         status="DISPROVED",
         reason=(
             f"no boolean payload toggled the response of '{expectation.param}' "
-            f"({expectation.method} {expectation.path}) — for every length-"
-            "matched pair the TRUE and FALSE responses were identical, so the "
-            "parameter does not influence a SQL boolean; no injection"
+            f"({expectation.method} {expectation.path}) and no quote-parity break/"
+            "restore appeared — every length-matched pair returned identical TRUE "
+            "and FALSE responses and appended quotes did not move the response off "
+            "and back onto the baseline, so the parameter does not reach the SQL "
+            "query; no injection"
         ),
         contradiction_kind="injection",
         expected=False,

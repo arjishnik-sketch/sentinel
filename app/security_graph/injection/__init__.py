@@ -52,6 +52,7 @@ from .injection_policy import (
     boolean_payload_pairs,
     load_injection_policy,
     parse_injection_policy,
+    quote_parity_payloads,
 )
 from .judge import (
     InjectionExpectation,
@@ -83,6 +84,7 @@ __all__ = [
     "boolean_payload_pairs",
     "load_injection_policy",
     "parse_injection_policy",
+    "quote_parity_payloads",
     "InjectionExpectation",
     "injection_expectation",
     "judge_injection",

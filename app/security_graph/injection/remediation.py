@@ -38,7 +38,7 @@ from ..models import Experiment, Hypothesis, HttpRequestSpec, SecurityFinding
 from ..remediation.enforcer import RemediationEnforcer, RequestGuardRule
 from ..remediation.model import RemediationVerification
 from .executor import InjectionProbeExecutor
-from .injection_policy import boolean_payload_pairs
+from .injection_policy import boolean_payload_pairs, quote_parity_payloads
 from .judge import InjectionExpectation, injection_expectation, judge_injection
 
 @dataclass(frozen=True)
@@ -378,11 +378,31 @@ def _differential(
             value=false_value,
         )
         pair_ids.append((true_id, false_id))
+    # Error-based (quote-parity) arm, re-run identically under the shield so a
+    # string-literal injection CONFIRMED via quote parity also flips to DISPROVED
+    # once the request-guard blocks the quote payloads (odd and even both 403 ->
+    # the parity is gone) while the benign baseline is still forwarded.
+    parity_ids: list[tuple[str, str]] = []
+    for index, (odd_value, even_value) in enumerate(
+        quote_parity_payloads(expectation.baseline_value)
+    ):
+        odd_id, _ = _probe(
+            scratch, executor, hypothesis, expectation,
+            tag=f"{phase}-oddquote-{index}", endpoint_url=endpoint_url,
+            value=odd_value,
+        )
+        even_id, _ = _probe(
+            scratch, executor, hypothesis, expectation,
+            tag=f"{phase}-evenquote-{index}", endpoint_url=endpoint_url,
+            value=even_value,
+        )
+        parity_ids.append((odd_id, even_id))
     judgment = judge_injection(
         scratch,
         hypothesis=hypothesis,
         baseline_experiment_id=baseline_id,
         pair_experiment_ids=tuple(pair_ids),
+        parity_experiment_ids=tuple(parity_ids),
     )
     return judgment, baseline_code
 

@@ -128,6 +128,40 @@ def boolean_payload_pairs(baseline_value: str) -> tuple[tuple[str, str], str]:
     return pairs, baseline_value
 
 
+# Quote-parity (error-based) suffixes for the SQL string-literal context. Each
+# entry is (odd_suffix, even_suffix): the odd suffix appends an UNBALANCED number
+# of quotes (breaks the literal → the backend errors, leaving the success anchor)
+# and the even suffix appends a BALANCED number (keeps the literal well-formed →
+# the response returns to the anchor). "Odd breaks / even restores" is a
+# backend-origin signal — a reflected value cannot change the STATUS by quote
+# parity, and a generic quote-rejecting filter fails it (it rejects both arms).
+# Two rungs (1↔2 and 3↔4 quotes) guard against a route that errors on a single
+# appended character for an unrelated reason. This is the common real-world SQLi
+# that a single-injection-point boolean payload misses (e.g. a parameter that is
+# interpolated into the query more than once).
+_QUOTE_PARITY_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("'", "''"),
+    ("'''", "''''"),
+)
+
+
+def quote_parity_payloads(baseline_value: str) -> tuple[tuple[str, str], ...]:
+    """
+    Build the (odd_quote, even_quote) value pairs for the error-based arm.
+
+    Returns a tuple of ``(baseline_value + odd_suffix, baseline_value +
+    even_suffix)`` pairs. The odd arm appends an UNBALANCED number of quotes
+    (breaks a SQL string literal → off the success anchor); the even arm appends
+    a BALANCED number (restores the literal → back on the anchor). Unlike the
+    boolean ladder this needs no length-matching: the arms are judged against the
+    success anchor by STATUS parity, not against each other by length.
+    """
+    return tuple(
+        (baseline_value + odd, baseline_value + even)
+        for odd, even in _QUOTE_PARITY_SUFFIXES
+    )
+
+
 def _as_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(

@@ -151,11 +151,31 @@ def _load_registry() -> dict:
 def _live_recon(target: str):
     """Run the real recon toolchain and derive the orchestrator's recon/findings
     dicts. ReconEngine already falls back to a dependency-free crawler when the
-    external binaries are absent, so this works on any host with no provisioning."""
+    external binaries are absent, so this works on any host with no provisioning.
+
+    ReconEngine.normalize() reduces the target to its scheme://host origin before
+    crawling, so an operator-supplied deep URL — its path and, crucially, its
+    query params — would otherwise be silently dropped. We honor it: the exact URL
+    the operator pointed us at IS a discovered surface, and its query parameters
+    are first-class injectable inputs. This is fully generic (any target with a
+    path/query benefits), not target-specific, and it is what lets Sentinel test a
+    param on an SPA whose root crawl reveals nothing on its own."""
+    from urllib.parse import urlsplit
     from app.recon_engine import ReconEngine
 
     engine = ReconEngine()
     recon = engine.run_pipeline(target)
+
+    seed = (target or "").strip()
+    if seed and "://" not in seed:
+        seed = "http://" + seed
+    parts = urlsplit(seed) if seed else None
+    if parts is not None and (parts.query or (parts.path and parts.path != "/")):
+        crawl = list(recon.get("crawl") or [])
+        if seed not in crawl:
+            crawl.insert(0, seed)
+            recon["crawl"] = crawl
+
     findings = engine.extract(recon)
     return recon, findings
 

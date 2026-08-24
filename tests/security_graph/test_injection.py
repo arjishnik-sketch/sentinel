@@ -40,6 +40,7 @@ from app.security_graph.injection import (
     boolean_payload_pairs,
     judge_injection,
     parse_injection_policy,
+    quote_parity_payloads,
     remediate_injection_and_prove,
     render_injection_artifacts,
     run_injection_investigation,
@@ -136,6 +137,37 @@ def _broken_baseline_body(value: str) -> tuple[int, int]:
     the differential has no anchor -> the judge must return INCONCLUSIVE.
     """
     return 500, _BASE_BODY
+
+
+def _error_based_body(value: str) -> tuple[int, int]:
+    """Model a VULNERABLE string-context search where the SINGLE-point boolean
+
+    payloads collapse — as on Juice Shop's ``/rest/products/search``, where ``q``
+    is interpolated TWICE, so one boolean injection point toggles nothing — but an
+    UNBALANCED quote still breaks the query. An odd number of trailing quotes
+    yields a backend error (500, off the success anchor); an even/balanced number
+    restores a legitimate response (200). The boolean tautology/contradiction
+    payloads do not end in a lone trailing quote, so both arms return the same
+    legitimate response and the boolean differential DISPROVES — only the
+    error-based quote-parity arm can prove this real injection.
+    """
+    trailing = len(value) - len(value.rstrip("'"))
+    if trailing % 2 == 1:
+        return 500, _ERR_BODY          # unbalanced quote -> SQL error
+    return 200, _BASE_BODY             # baseline / balanced -> legitimate response
+
+
+def _quote_rejecting_filter_body(value: str) -> tuple[int, int]:
+    """Model a NON-injectable endpoint that simply rejects any quote (a generic
+
+    input filter / WAF): the odd AND even quote payloads both fail (400). The
+    parity arm must NOT fire — it requires the balanced (even) arm to RESTORE a
+    legitimate response — so this is DISPROVED. Quote parity is backend-origin;
+    an input filter that rejects both arms is not an injection.
+    """
+    if "'" in value or '"' in value:
+        return 400, _ERR_BODY
+    return 200, _BASE_BODY
 
 
 class _CannedInjectionExecutor(ExperimentExecutor):
@@ -319,6 +351,66 @@ def test_pure_judge_reads_the_boolean_differential_directly():
     assert judgment.status == "VALIDATED"
     assert judgment.contradiction_kind == "injection"
     assert judgment.observed is True
+
+
+# --- error-based (quote-parity) differential: the string-literal SQLi a single
+#     boolean injection point misses (e.g. Juice Shop's double-interpolated q) --
+
+def test_error_based_quote_parity_is_validated_and_confirmed():
+    # Boolean pairs collapse (double interpolation), but an unbalanced quote
+    # breaks the query and a balanced pair restores it -> quote parity proves it.
+    graph, results = _resolved_graph(_error_based_body)
+    assert results[0].status == "VALIDATED"
+    assert "quote" in results[0].reason.lower()
+    assert graph.hypotheses[results[0].hypothesis_id].status == "CONFIRMED"
+    finding = _confirmed_finding(graph)
+    assert finding.kind == "injection" and finding.severity == "HIGH"
+
+
+def test_generic_quote_filter_is_not_injection_disproved():
+    # An endpoint that rejects BOTH odd and even quotes is a generic input filter,
+    # not an injection: the balanced arm never restores a legitimate response, so
+    # the parity arm must not fire -> DISPROVED, nothing manufactured.
+    graph, results = _resolved_graph(_quote_rejecting_filter_body)
+    assert results[0].status == "DISPROVED"
+    assert not list(graph.findings_for(kind="injection", status="OPEN"))
+
+
+def test_pure_judge_reads_quote_parity_differential_directly():
+    # Re-run the PURE judge over the recorded quote-parity probes with the boolean
+    # arm empty, and assert VALIDATED is a deterministic function of the parity.
+    graph, results = _resolved_graph(_error_based_body)
+    hyp = graph.hypotheses[results[0].hypothesis_id]
+    parity = quote_parity_payloads(BASELINE_VALUE)
+    parity_ids = tuple(
+        (f"exp:injection-oddquote-{i}:{hyp.id}", f"exp:injection-evenquote-{i}:{hyp.id}")
+        for i in range(len(parity))
+    )
+    judgment = judge_injection(
+        graph,
+        hypothesis=hyp,
+        baseline_experiment_id=f"exp:injection-baseline:{hyp.id}",
+        pair_experiment_ids=(),               # boolean collapsed; force parity arm
+        parity_experiment_ids=parity_ids,
+    )
+    assert judgment.status == "VALIDATED" and judgment.observed is True
+
+
+def test_remediate_error_based_injection_fix_proven():
+    # A quote-parity-confirmed injection is PROVEN fixed when the request-guard
+    # blocks the quote payloads (odd & even both 403) so parity collapses while
+    # the benign baseline is still forwarded.
+    graph, _ = _resolved_graph(_error_based_body)
+    outcome = remediate_injection_and_prove(
+        graph,
+        _confirmed_finding(graph),
+        before_executor=_CannedInjectionExecutor(_error_based_body),
+        after_executor=_CannedInjectionExecutor(_guarded_body),
+        use_enforcer=False,
+    )
+    assert outcome.result == "FIX_PROVEN"
+    assert outcome.verification.before_status == "VALIDATED"
+    assert outcome.verification.after_status == "DISPROVED"
 
 
 # --- guard purity (the virtual-patch decision) -----------------------------
