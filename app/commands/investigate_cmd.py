@@ -1522,6 +1522,217 @@ def _ssti_remediation_panel(outcome) -> Panel:
     )
 
 
+def _xss_matrix_panel(policy, source: str, *, synthesized: bool = False) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "xss matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered candidate parameter(s)"
+            if synthesized
+            else "declared reflective surface(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[white]{check.param}[/white] "
+            f"[{_C_DIM}]MUST NOT reflect active markup ·[/{_C_DIM}] "
+            f"[{_C_DIM}]{check.location} · {check.method} "
+            f"{_short(check.path, 32)}[/{_C_DIM}]"
+        )
+    # XSS-MATRIX-NOTE-ANCHOR
+    note = Text(
+        (
+            "\nAuto-discovered candidates — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by a REFLECTION "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by a REFLECTION "
+        )
+        + "differential on the live target: a CONTROL probe sends a benign "
+        "random marker with NO HTML-significant characters (which must merely be "
+        "reflected — the anchor), plus payload probes wrapping that same marker "
+        "in active markup (<script>, <svg onload=>, <img onerror=>, <body "
+        "onload=>). Reflected XSS is VALIDATED only when a payload response "
+        "contains the raw markup VERBATIM (the '<'/'>' survived output encoding "
+        "un-escaped, carrying our marker) AND the control proved mere reflection "
+        "— an HTML-escaped value (&lt;script&gt;) can never match. A parameter "
+        "that is escaped/stripped collapses → DISPROVED. A bare status code is "
+        "never the verdict.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ XSS · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ XSS MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+def _xss_findings_panel(results) -> Panel:
+    """Render every reflected-XSS verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("param")
+    table.add_column("control", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ not reflected",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = (
+            probe.control_status_code
+            if probe.control_status_code is not None
+            else "—"
+        )
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.param, 20)}[/white]",
+            f"[{_C_DIM}]{code}[/{_C_DIM}]",
+            _short(probe.reason, 46),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} reflected XSS(es) reproduced against the live target — "
+        f"an active-markup payload provably reflected VERBATIM un-escaped while "
+        f"the control merely reflected the benign marker — and CONFIRMED; a "
+        f"parameter the backend HTML-escapes or strips yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ XSS · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+def _xss_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed reflected-XSS finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]({rule.location})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 34)}[/white]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]context-aware output encoding at the sink + a "
+            f"restrictive CSP[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+    # XSS-REMEDIATION-VERIFY-ANCHOR
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy"
+            f"[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ XSS REMEDIATION · PATCH + PROVE"
+        f"[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _open_redirect_matrix_panel(
     policy, source: str, *, synthesized: bool = False
 ) -> Panel:
@@ -3303,6 +3514,147 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]ssti stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # --- REFLECTED CROSS-SITE SCRIPTING (REFLECTION DIFFERENTIAL) -------------
+    # Seventh class. Like injection and SSTI, reflected XSS's ground truth is
+    # INTERNAL — the reflection differential is self-anchoring (a benign marker
+    # control plus active-markup payloads), so the operator only ever needed to
+    # supply WHERE to look. The matrix lives in an `xss_matrix` section of the
+    # policy file, or in a dedicated file via $SENTINEL_XSS_POLICY; in discover
+    # mode it is synthesized from live recon. The SAME pure judge decides each.
+    xss_policy = None
+    xss_source = os.environ.get("SENTINEL_XSS_POLICY") or None
+    if xss_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("xss_matrix"):
+                xss_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            xss_source = None
+
+    if xss_source:
+        from app.security_graph.xss import load_xss_policy
+
+        try:
+            xss_policy = load_xss_policy(xss_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load xss matrix '{xss_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]xss matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            xss_policy = None
+
+    # DISCOVER MODE: with no operator matrix, SYNTHESIZE the reflective surface
+    # from live recon. Honest because reflected XSS's ground truth is internal —
+    # the operator only ever needed to supply *where to look*, which recon saw.
+    xss_synthesized = False
+    if discover_mode and (xss_policy is None or not xss_policy.checks):
+        from app.security_graph.xss import synthesize_xss_policy
+
+        xss_discovery = synthesize_xss_policy(result.graph)
+        if xss_discovery.policy.checks:
+            xss_policy = xss_discovery.policy
+            xss_source = f"synthesized · live-recon ({xss_discovery.note})"
+            xss_synthesized = True
+    if xss_policy is not None and xss_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]REFLECTED CROSS-SITE SCRIPTING · "
+                f"REFLECTION DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(
+            _xss_matrix_panel(
+                xss_policy,
+                xss_source,
+                synthesized=xss_synthesized,
+            )
+        )
+        try:
+            from app.security_graph.xss import run_xss_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running control + active-markup differential + "
+                f"judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                xss_results = run_xss_investigation(
+                    result.graph,
+                    xss_policy,
+                    target_base=result.target,
+                )
+            if xss_results:
+                console.print(_xss_findings_panel(xss_results))
+            xss_confirmed = result.graph.findings_for(
+                kind="xss", status="OPEN"
+            )
+            if xss_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]XSS REMEDIATION · PATCH + PROVE · "
+                        f"{len(xss_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.xss import (
+                    remediate_xss_findings,
+                    synthesize_xss_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in xss_confirmed:
+                    plan = synthesize_xss_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "request-guard virtual patch (no plan derived)"
+                    else:
+                        control = (
+                            f"request-guard {plan.rule.param} "
+                            f"({plan.rule.location}) → "
+                            f"{plan.rule.method} {plan.rule.path}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="reflected xss",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the request-guard shield + "
+                        f"proving the markup no longer reflects…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        xss_outcomes = remediate_xss_findings(result.graph)
+                    for remediation in xss_outcomes:
+                        console.print(_xss_remediation_panel(remediation))
+
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]xss stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

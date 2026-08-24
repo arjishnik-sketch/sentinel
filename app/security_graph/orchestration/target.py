@@ -237,6 +237,18 @@ class TargetResearchPipeline:
             )
         )
 
+        # The reflected-XSS class reuses the same HTTP fact executor (capturing
+        # the bounded response-body-text prefix, the reflection differential's
+        # signal) under its own kind — no shared interpretation; the pure judge
+        # decides whether attacker markup reflected un-escaped.
+        from ..xss.executor import XSSProbeExecutor
+
+        registry.register(
+            XSSProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         # The open-redirect class reuses the base HTTP fact executor, but with
         # redirect-FOLLOWING disabled so the response Location header is OBSERVED
         # (never followed) — the unroutable off-origin nonce host is never

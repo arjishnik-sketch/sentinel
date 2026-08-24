@@ -15,6 +15,7 @@ _SEVERITY_BY_KIND = {
     "privilege_escalation": "HIGH",
     "injection": "HIGH",
     "template_injection": "HIGH",
+    "xss": "HIGH",
     "open_redirect": "MEDIUM",
     "cors_misconfig": "MEDIUM",
     "ssrf": "HIGH",
