@@ -22,13 +22,13 @@ router=CommandRouter()
 
 def hunt(arg):
 
-    if not arg:
-
-        console.print("[red]Usage : hunt <target>[/red]")
-
-        return
-
-    core.hunt(arg)
+    # `hunt` is a legacy alias for the autonomous URL-only discovery pipeline.
+    # The original core.hunt() path was pre-contract scaffolding (a RAG "brain"
+    # + generic workflow runner) that never ran the evidence-driven
+    # find -> prove -> patch -> prove judge, so it is intentionally NOT revived.
+    # Delegate to the same pipeline as `discover` (it prints its own usage on
+    # an empty target).
+    discover_cmd(arg)
 
 
 def resume(arg):
@@ -73,7 +73,7 @@ def help_cmd(arg):
 
 Commands
 
-hunt <target>
+hunt <target>                          (alias: autonomous URL-only discover)
 
 investigate <target> [cycles] [access_policy.json] [source_repo_dir]
 
