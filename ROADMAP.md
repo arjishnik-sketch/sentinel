@@ -21,7 +21,7 @@
 | 5 | SQL injection | `injection` | HIGH | **zero-oracle (synth)** | ✅ |
 | 6 | Template injection (SSTI) | `template_injection` | HIGH | **zero-oracle** | ✅ |
 | 7 | Cross-site scripting (XSS) | `xss` | HIGH | **zero-oracle** | ✅ |
-| 8 | Path traversal / LFI | `path_traversal` | HIGH | **zero-oracle** | 🔨 |
+| 8 | Path traversal / LFI | `path_traversal` | HIGH | **zero-oracle** | ✅ |
 | 9 | Open redirect | `open_redirect` | MEDIUM | **zero-oracle** | ✅ |
 | 10 | CORS misconfiguration | `cors_misconfig` | MEDIUM | **zero-config baseline** | ✅ |
 | 11 | Server-side request forgery | `ssrf` | HIGH | **zero-oracle (OOB)** | ✅ |

@@ -297,6 +297,19 @@ class TargetResearchPipeline:
             )
         )
 
+        # Path-traversal / LFI probe (kind `path_traversal_check`): reuses the
+        # base HTTP fact executor (capturing the bounded response-body-text prefix,
+        # the OS-canary differential's signal) under its own kind. No shared
+        # interpretation; the pure judge decides whether a directory-escape payload
+        # leaked an OS-file invariant absent from the benign control.
+        from ..path_traversal.executor import PathTraversalProbeExecutor
+
+        registry.register(
+            PathTraversalProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod

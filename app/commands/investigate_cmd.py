@@ -1733,6 +1733,218 @@ def _xss_remediation_panel(outcome) -> Panel:
     )
 
 
+def _traversal_matrix_panel(policy, source: str, *, synthesized: bool = False) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "traversal matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered candidate parameter(s)"
+            if synthesized
+            else "declared file surface(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[white]{check.param}[/white] "
+            f"[{_C_DIM}]MUST NOT read outside root ·[/{_C_DIM}] "
+            f"[{_C_DIM}]{check.location} · {check.method} "
+            f"{_short(check.path, 32)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        (
+            "\nAuto-discovered candidates — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by an OS-CANARY "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by an OS-CANARY "
+        )
+        + "differential on the live target: a CONTROL probe sends a benign, "
+        "traversal-free filename (sentinel-baseline.txt — which can never leak a "
+        "system file, the invariant-ABSENCE anchor), plus payload probes carrying "
+        "directory-escape shapes aimed at cross-OS canaries (../../etc/passwd, "
+        "..\\..\\windows\\win.ini, absolute paths, NUL truncation). Path traversal "
+        "is VALIDATED only when a payload response contains an OS-FILE INVARIANT "
+        "(root:x:0:0: / a [fonts] win.ini section) ABSENT from the control — "
+        "content a normal response could never contain. A parameter that "
+        "canonicalises / confines to a safe root collapses → DISPROVED. A bare "
+        "status code is never the verdict.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ PATH TRAVERSAL · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ PATH-TRAVERSAL MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+# TRAVERSAL-PANEL-ANCHOR
+def _traversal_findings_panel(results) -> Panel:
+    """Render every path-traversal verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("param")
+    table.add_column("control", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ confined",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = (
+            probe.control_status_code
+            if probe.control_status_code is not None
+            else "—"
+        )
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.param, 20)}[/white]",
+            f"[{_C_DIM}]{code}[/{_C_DIM}]",
+            _short(probe.reason, 46),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} path traversal(s) reproduced against the live target — "
+        f"a directory-escape payload provably leaked an OS-FILE INVARIANT "
+        f"(root:x:0:0: / a win.ini section) ABSENT from the benign control — and "
+        f"CONFIRMED; a parameter that canonicalises / confines to a safe root "
+        f"yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ PATH TRAVERSAL · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _traversal_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed path-traversal finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]({rule.location})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 34)}[/white]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]canonicalise the resolved path (realpath) + confine to "
+            f"an allowlisted base directory[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy"
+            f"[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ PATH-TRAVERSAL REMEDIATION · PATCH + PROVE"
+        f"[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _open_redirect_matrix_panel(
     policy, source: str, *, synthesized: bool = False
 ) -> Panel:
@@ -3655,6 +3867,168 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]xss stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # Eighth class. Path traversal / LFI's ground truth is an OS-CANARY
+    # differential against the live target — a benign, traversal-free control
+    # filename (sentinel-baseline.txt, which can never leak a system file, the
+    # invariant-ABSENCE anchor) plus a fixed ladder of directory-escape payloads
+    # aimed at cross-OS canaries — so the operator only ever needed to supply
+    # WHERE to look. The matrix lives in a `path_traversal_matrix` section of the
+    # policy file, or in a dedicated file via $SENTINEL_PATH_TRAVERSAL_POLICY; in
+    # discover mode it is synthesized from live recon (file-like parameters). The
+    # SAME pure judge decides each: VALIDATED only when a payload response carries
+    # an OS-file invariant ABSENT from the control.
+    traversal_policy = None
+    traversal_source = os.environ.get("SENTINEL_PATH_TRAVERSAL_POLICY") or None
+    if traversal_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and (
+                combined.get("path_traversal_matrix")
+                or combined.get("traversal_matrix")
+            ):
+                traversal_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            traversal_source = None
+
+    if traversal_source:
+        from app.security_graph.path_traversal import load_traversal_policy
+
+        try:
+            traversal_policy = load_traversal_policy(traversal_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load path-traversal matrix "
+                        f"'{traversal_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]path-traversal matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            traversal_policy = None
+
+    # DISCOVER MODE: with no operator matrix, SYNTHESIZE the file-read surface
+    # from live recon. Honest because path traversal's ground truth is internal —
+    # the OS-canary differential is self-anchoring, so the operator only ever
+    # needed to supply *where to look*, which recon (file-like parameters) saw.
+    traversal_synthesized = False
+    if discover_mode and (
+        traversal_policy is None or not traversal_policy.checks
+    ):
+        from app.security_graph.path_traversal import (
+            synthesize_path_traversal_policy,
+        )
+
+        traversal_discovery = synthesize_path_traversal_policy(result.graph)
+        if traversal_discovery.policy.checks:
+            traversal_policy = traversal_discovery.policy
+            traversal_source = (
+                f"synthesized · live-recon ({traversal_discovery.note})"
+            )
+            traversal_synthesized = True
+    if traversal_policy is not None and traversal_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]PATH TRAVERSAL / LFI · "
+                f"OS-CANARY DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(
+            _traversal_matrix_panel(
+                traversal_policy,
+                traversal_source,
+                synthesized=traversal_synthesized,
+            )
+        )
+        try:
+            from app.security_graph.path_traversal import (
+                run_path_traversal_investigation,
+            )
+
+            with console.status(
+                f"[{_C_ACCENT}]running benign control + directory-escape "
+                f"payload ladder + judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                traversal_results = run_path_traversal_investigation(
+                    result.graph,
+                    traversal_policy,
+                    target_base=result.target,
+                )
+            if traversal_results:
+                console.print(_traversal_findings_panel(traversal_results))
+            traversal_confirmed = result.graph.findings_for(
+                kind="path_traversal", status="OPEN"
+            )
+            if traversal_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]PATH-TRAVERSAL REMEDIATION · PATCH + "
+                        f"PROVE · {len(traversal_confirmed)} FINDING(S)"
+                        f"[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.path_traversal import (
+                    remediate_path_traversal_findings,
+                    synthesize_path_traversal_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in traversal_confirmed:
+                    plan = synthesize_path_traversal_remediation(
+                        result.graph, finding
+                    )
+                    if plan is None:
+                        control = "request-guard virtual patch (no plan derived)"
+                    else:
+                        control = (
+                            f"request-guard {plan.rule.param} "
+                            f"({plan.rule.location}) → "
+                            f"{plan.rule.method} {plan.rule.path}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="path traversal",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the request-guard shield + "
+                        f"proving no OS-file invariant leaks…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        traversal_outcomes = remediate_path_traversal_findings(
+                            result.graph
+                        )
+                    for remediation in traversal_outcomes:
+                        console.print(_traversal_remediation_panel(remediation))
+
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]path-traversal stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

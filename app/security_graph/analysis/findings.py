@@ -20,6 +20,7 @@ _SEVERITY_BY_KIND = {
     "cors_misconfig": "MEDIUM",
     "ssrf": "HIGH",
     "broken_auth": "HIGH",
+    "path_traversal": "HIGH",
 }
 _DEFAULT_SEVERITY = "HIGH"
 
