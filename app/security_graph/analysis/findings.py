@@ -14,6 +14,7 @@ _SEVERITY_BY_KIND = {
     "insecure_cookie": "MEDIUM",
     "privilege_escalation": "HIGH",
     "injection": "HIGH",
+    "template_injection": "HIGH",
 }
 _DEFAULT_SEVERITY = "HIGH"
 

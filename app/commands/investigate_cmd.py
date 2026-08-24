@@ -1309,6 +1309,219 @@ def _injection_remediation_panel(outcome) -> Panel:
     )
 
 
+def _ssti_matrix_panel(policy, source: str, *, synthesized: bool = False) -> Panel:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row("source", f"[{_C_PRIMARY}]{_short(source, 70)}[/{_C_PRIMARY}]")
+    table.add_row(
+        "ssti matrix",
+        f"[{_C_ACCENT}]{len(policy.checks)}[/{_C_ACCENT}] "
+        + (
+            "auto-discovered candidate parameter(s)"
+            if synthesized
+            else "declared template surface(s)"
+        ),
+    )
+
+    rules = Table.grid(padding=(0, 2))
+    rules.add_column(style=_C_DIM)
+    for check in policy.checks[:10]:
+        sev_style = {
+            "CRITICAL": _C_BAD,
+            "HIGH": _C_BAD,
+            "MEDIUM": _C_WARN,
+            "LOW": _C_DIM,
+        }.get(check.severity, _C_DIM)
+        rules.add_row(
+            f"[{sev_style}]{check.severity:<8}[/{sev_style}] "
+            f"[white]{check.param}[/white] "
+            f"[{_C_DIM}]MUST NOT be evaluated ·[/{_C_DIM}] "
+            f"[{_C_DIM}]{check.location} · {check.method} "
+            f"{_short(check.path, 32)}[/{_C_DIM}]"
+        )
+
+    note = Text(
+        (
+            "\nAuto-discovered candidates — derived from live recon, NOT an "
+            "operator oracle. Each is still proven by an ARITHMETIC-EVALUATION "
+            if synthesized
+            else "\nGround truth only. Each surface is proven by an "
+            "ARITHMETIC-EVALUATION "
+        )
+        + "differential on the live target: a CONTROL probe sends the literal "
+        "expression a*b with NO template delimiters (which must merely be "
+        "reflected — the anchor), plus payload probes wrapping that same a*b in "
+        "each common delimiter ({{…}}, ${…}, #{…}, <%= … %>). SSTI is VALIDATED "
+        "only when a payload response renders the COMPUTED PRODUCT while the "
+        "literal is gone AND the control proved mere reflection — the product "
+        "can only have come from the backend evaluating the template. A "
+        "parameter that is only reflected collapses → DISPROVED. A bare status "
+        "code is never the verdict.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, Rule(style=_C_DIM), rules, note),
+        title=(
+            f"[{_C_ACCENT}]▐ SSTI · AUTO-DISCOVERED SURFACE[/{_C_ACCENT}]"
+            if synthesized
+            else f"[{_C_ACCENT}]▐ SSTI MATRIX ORACLE[/{_C_ACCENT}]"
+        ),
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _ssti_findings_panel(results) -> Panel:
+    """Render every SSTI verdict, including the DISPROVED ones."""
+    table = Table(
+        show_header=True,
+        header_style=f"bold {_C_ACCENT}",
+        border_style=_C_ACCENT,
+        expand=True,
+    )
+    table.add_column("verdict")
+    table.add_column("severity")
+    table.add_column("param")
+    table.add_column("control", justify="right")
+    table.add_column("claim")
+
+    for probe in results:
+        v_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(probe.status, _C_WARN)
+        label = {
+            "VALIDATED": "● FINDING",
+            "DISPROVED": "○ not evaluated",
+            "INCONCLUSIVE": "· inconclusive",
+        }.get(probe.status, probe.status)
+        code = (
+            probe.control_status_code
+            if probe.control_status_code is not None
+            else "—"
+        )
+        table.add_row(
+            f"[{v_style}]{label}[/{v_style}]",
+            f"[{_C_DIM}]{probe.severity}[/{_C_DIM}]",
+            f"[white]{_short(probe.param, 20)}[/white]",
+            f"[{_C_DIM}]{code}[/{_C_DIM}]",
+            _short(probe.reason, 46),
+        )
+
+    confirmed = sum(1 for probe in results if probe.status == "VALIDATED")
+    note = Text(
+        f"\n{confirmed} template injection(s) reproduced against the live "
+        f"target — a template-wrapped payload provably rendered the computed "
+        f"product while the control merely reflected the literal — and "
+        f"CONFIRMED; a parameter the backend only reflects yields no finding.",
+        style=_C_DIM,
+    )
+
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ SSTI · DETERMINISTIC JUDGE[/{_C_ACCENT}]",
+        border_style=_C_ACCENT,
+        padding=(1, 2),
+    )
+
+
+def _ssti_remediation_panel(outcome) -> Panel:
+    """Render the PATCH + PROVE result for one confirmed SSTI finding."""
+
+    result = outcome.result
+    result_style = {
+        "FIX_PROVEN": _C_OK,
+        "FIX_FAILED": _C_BAD,
+        "NOT_APPLICABLE": _C_DIM,
+        "ERROR": _C_BAD,
+    }.get(result, _C_WARN)
+    badge = {
+        "FIX_PROVEN": "✔ FIX PROVEN",
+        "FIX_FAILED": "✘ FIX NOT PROVEN",
+        "NOT_APPLICABLE": "— NOT APPLICABLE",
+        "ERROR": "✘ ERROR",
+    }.get(result, result)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style=_C_DIM, justify="right")
+    table.add_column(style="white")
+
+    table.add_row(
+        "verdict",
+        f"[bold {result_style}]{badge}[/bold {result_style}]",
+    )
+
+    plan = outcome.plan
+    if plan is not None:
+        rule = plan.rule
+        table.add_row("strategy", plan.strategy)
+        table.add_row(
+            "control",
+            f"[bold {_C_BAD}]REQUEST-GUARD[/bold {_C_BAD}] "
+            f"[white]{rule.param}[/white] "
+            f"[{_C_DIM}]({rule.location})[/{_C_DIM}] "
+            f"[{_C_DIM}]→[/{_C_DIM}] "
+            f"[white]{rule.method} {_short(rule.path, 34)}[/white]",
+        )
+        table.add_row(
+            "root cause",
+            f"[{_C_DIM}]render untrusted input as data, never as template "
+            f"source[/{_C_DIM}]",
+        )
+        table.add_row(
+            "upstream",
+            f"[{_C_DIM}]{_short(plan.upstream_base, 60)}[/{_C_DIM}]",
+        )
+
+    verification = outcome.verification
+    if verification is not None:
+        before_code = verification.before_status_code
+        after_code = verification.observed_status_code
+        before_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.before_status, _C_WARN)
+        after_style = {
+            "VALIDATED": _C_BAD,
+            "DISPROVED": _C_OK,
+            "INCONCLUSIVE": _C_DIM,
+        }.get(verification.after_status, _C_WARN)
+        table.add_row(
+            "live prove",
+            f"[{_C_DIM}]before[/{_C_DIM}] "
+            f"[white]{before_code if before_code is not None else '—'}[/white] "
+            f"[bold {before_style}]{verification.before_status}[/bold {before_style}]"
+            f"  [{_C_DIM}]→[/{_C_DIM}]  "
+            f"[{_C_DIM}]after[/{_C_DIM}] "
+            f"[white]{after_code if after_code is not None else '—'}[/white] "
+            f"[bold {after_style}]{verification.after_status}[/bold {after_style}]",
+        )
+
+    if outcome.artifacts is not None:
+        table.add_row(
+            "artifacts",
+            f"[{_C_PRIMARY}]portable-json · nginx · modsecurity · caddy"
+            f"[/{_C_PRIMARY}]",
+        )
+
+    blocks = [table]
+    if outcome.detail:
+        blocks.append(Text(f"\n{_short(outcome.detail, 100)}", style=_C_DIM))
+
+    return Panel(
+        Group(*blocks),
+        title=f"[{result_style}]▐ SSTI REMEDIATION · PATCH + PROVE"
+        f"[/{result_style}]",
+        border_style=result_style,
+        padding=(1, 2),
+    )
+
+
 def _parse_args(arg: str) -> tuple[str, int, str | None, str | None]:
     parts = arg.split()
     target = parts[0]
@@ -2100,6 +2313,148 @@ def run(arg, *, discover_mode=False):
                 Panel(
                     Text(str(exc), style=_C_BAD),
                     title=f"[{_C_BAD}]sql injection stage failed[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+
+    # --- SERVER-SIDE TEMPLATE INJECTION (ARITHMETIC-EVALUATION DIFFERENTIAL) ---
+    # Sixth class. Like injection, SSTI's ground truth is INTERNAL — the
+    # arithmetic-evaluation differential is self-anchoring (a literal a*b control
+    # plus template-wrapped payloads), so the operator only ever needed to supply
+    # WHERE to look. The matrix lives in an `ssti_matrix` section of the policy
+    # file, or in a dedicated file via $SENTINEL_SSTI_POLICY; in discover mode it
+    # is synthesized from live recon. The SAME pure judge decides every check.
+    ssti_policy = None
+    ssti_source = os.environ.get("SENTINEL_SSTI_POLICY") or None
+    if ssti_source is None and policy_path:
+        import json
+
+        try:
+            with open(policy_path, encoding="utf-8") as handle:
+                combined = json.load(handle)
+            if isinstance(combined, dict) and combined.get("ssti_matrix"):
+                ssti_source = policy_path
+        except Exception:  # noqa: BLE001 — a malformed file is reported elsewhere
+            ssti_source = None
+
+    if ssti_source:
+        from app.security_graph.ssti import load_ssti_policy
+
+        try:
+            ssti_policy = load_ssti_policy(ssti_source)
+        except Exception as exc:  # noqa: BLE001 — surface cleanly
+            console.print(
+                Panel(
+                    Text(
+                        f"Failed to load ssti matrix '{ssti_source}': {exc}",
+                        style=_C_BAD,
+                    ),
+                    title=f"[{_C_BAD}]ssti matrix error[/{_C_BAD}]",
+                    border_style=_C_BAD,
+                )
+            )
+            ssti_policy = None
+
+    # DISCOVER MODE: with no operator matrix, SYNTHESIZE the template surface from
+    # live recon. Honest because SSTI's ground truth is internal — the operator
+    # only ever needed to supply *where to look*, which recon observed for us.
+    ssti_synthesized = False
+    if discover_mode and (ssti_policy is None or not ssti_policy.checks):
+        from app.security_graph.ssti import synthesize_ssti_policy
+
+        ssti_discovery = synthesize_ssti_policy(result.graph)
+        if ssti_discovery.policy.checks:
+            ssti_policy = ssti_discovery.policy
+            ssti_source = f"synthesized · live-recon ({ssti_discovery.note})"
+            ssti_synthesized = True
+
+    if ssti_policy is not None and ssti_policy.checks:
+        console.print()
+        console.print(
+            Rule(
+                f"[bold {_C_ACCENT}]SERVER-SIDE TEMPLATE INJECTION · "
+                f"ARITHMETIC DIFFERENTIAL[/bold {_C_ACCENT}]",
+                style=_C_ACCENT,
+            )
+        )
+        console.print(
+            _ssti_matrix_panel(
+                ssti_policy,
+                ssti_source,
+                synthesized=ssti_synthesized,
+            )
+        )
+        try:
+            from app.security_graph.ssti import run_ssti_investigation
+
+            with console.status(
+                f"[{_C_ACCENT}]running control + template-payload differential + "
+                f"judging live…[/{_C_ACCENT}]",
+                spinner="dots",
+            ):
+                ssti_results = run_ssti_investigation(
+                    result.graph,
+                    ssti_policy,
+                    target_base=result.target,
+                )
+            if ssti_results:
+                console.print(_ssti_findings_panel(ssti_results))
+
+            ssti_confirmed = result.graph.findings_for(
+                kind="template_injection", status="OPEN"
+            )
+            if ssti_confirmed and not skip_remediation:
+                console.print()
+                console.print(
+                    Rule(
+                        f"[bold {_C_OK}]SSTI REMEDIATION · PATCH + PROVE · "
+                        f"{len(ssti_confirmed)} FINDING(S)[/bold {_C_OK}]",
+                        style=_C_OK,
+                    )
+                )
+                from app.security_graph.ssti import (
+                    remediate_ssti_findings,
+                    synthesize_ssti_remediation,
+                )
+                from app.commands.remediation_gate import RemediationProposal
+
+                proposals = []
+                for finding in ssti_confirmed:
+                    plan = synthesize_ssti_remediation(result.graph, finding)
+                    if plan is None:
+                        control = "request-guard virtual patch (no plan derived)"
+                    else:
+                        control = (
+                            f"request-guard {plan.rule.param} "
+                            f"({plan.rule.location}) → "
+                            f"{plan.rule.method} {plan.rule.path}"
+                        )
+                    proposals.append(
+                        RemediationProposal(
+                            title=finding.title,
+                            severity=finding.severity,
+                            control=control,
+                        )
+                    )
+
+                if _gate_remediation(
+                    class_label="template injection",
+                    color=_C_OK,
+                    proposals=proposals,
+                ):
+                    with console.status(
+                        f"[{_C_OK}]standing up the request-guard shield + "
+                        f"proving the template no longer evaluates…[/{_C_OK}]",
+                        spinner="dots",
+                    ):
+                        ssti_outcomes = remediate_ssti_findings(result.graph)
+                    for remediation in ssti_outcomes:
+                        console.print(_ssti_remediation_panel(remediation))
+        except Exception as exc:  # noqa: BLE001 — surface cleanly, never raise
+            console.print(
+                Panel(
+                    Text(str(exc), style=_C_BAD),
+                    title=f"[{_C_BAD}]ssti stage failed[/{_C_BAD}]",
                     border_style=_C_BAD,
                 )
             )

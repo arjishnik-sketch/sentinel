@@ -7,6 +7,30 @@ from ..models import Evidence, ExecutionResult, Experiment
 from .base import ExperimentExecutor
 
 
+# The upper bound on the response-body text captured into evidence. A finding
+# never rests on body *length* alone; the content-differential classes (SSTI /
+# reflected-XSS / path-traversal) need to see whether a computed value, a
+# reflected marker, or an OS canary actually appears in the body. Capturing the
+# whole body would be unbounded, so we keep a generous but fixed prefix — large
+# enough to hold a rendered search page or a JSON error, small enough to bound
+# memory. The deterministic judges search only within this captured text.
+_MAX_BODY_CAPTURE = 262144  # 256 KiB
+
+
+def _capture_body_text(response_body: bytes) -> str:
+    """
+    Decode a bounded prefix of the raw response body to text, losslessly-ish.
+
+    Uses ``errors="replace"`` so a binary or mis-encoded body can never raise —
+    it only ever yields a string a judge can substring-search. This is a fact,
+    not a verdict: the executor never interprets it. Classes that read only
+    status/length/headers/set_cookie ignore this key entirely.
+    """
+    if not response_body:
+        return ""
+    return response_body[:_MAX_BODY_CAPTURE].decode("utf-8", "replace")
+
+
 def _collect_set_cookie(headers) -> list[str]:
     """
     Losslessly capture every ``Set-Cookie`` response header as a list.
@@ -159,6 +183,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             "response_headers": response_headers,
             "set_cookie": set_cookies,
             "response_body_length": len(response_body),
+            "response_body_text": _capture_body_text(response_body),
             "expected_statuses": request_spec.expected_statuses,
             "expected_outcome": request_spec.expected_outcome,
         }

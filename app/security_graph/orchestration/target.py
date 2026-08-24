@@ -225,6 +225,18 @@ class TargetResearchPipeline:
             )
         )
 
+        # The SSTI (server-side template injection) class reuses the same HTTP
+        # fact executor (now also capturing a bounded response-body-text prefix,
+        # the arithmetic-evaluation differential's signal) under its own kind —
+        # no shared interpretation; the pure judge decides the differential.
+        from ..ssti.executor import SSTIProbeExecutor
+
+        registry.register(
+            SSTIProbeExecutor(
+                allowed_hosts=scope_hosts,
+            )
+        )
+
         return registry
 
     @staticmethod
