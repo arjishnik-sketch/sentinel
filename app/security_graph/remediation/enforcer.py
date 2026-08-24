@@ -258,15 +258,16 @@ def apply_cookie_mutations(resp_headers, method, path, cookie_rules):
     return result
 
 
-# Injection-signature patterns for the request-guard (virtual patch). These
-# recognise the boolean-tautology / boolean-contradiction / UNION / stacked-
-# comment shapes a SQL-injection probe carries in a parameter value. They are
-# deliberately payload-shape signatures, not target-specific: the same guard
-# blocks the whole injection family on any stack. Nothing here decides a
-# vulnerability — the guard only refuses to forward a request whose parameter
-# carries an injection signature, so a fresh boolean differential through the
-# shield collapses (TRUE and FALSE both become 403) and the pure judge can
-# observe the fix. Matching is case-insensitive on the URL-decoded value.
+# Request-guard signature families (virtual patch). Each family is a tuple of
+# payload-SHAPE patterns — never target-specific logic. The guard refuses to
+# forward a request whose guarded parameter carries a signature from its family,
+# BEFORE it reaches the upstream, so a fresh differential through the shield
+# collapses and the pure judge can observe the fix. Nothing here decides a
+# vulnerability; it only blocks a malicious request shape. One guard, many
+# classes: a class picks its family by name on the RequestGuardRule.
+# Matching is case-insensitive on the URL-decoded value.
+
+# SQL injection — boolean-tautology / boolean-contradiction / UNION / comment.
 _SQLI_SIGNATURES = (
     # quoted boolean: ' OR '1'='1  /  ") AND ("1"="2  /  ')) OR (('1'='1
     re.compile(r"""['"]\s*\)*\s*(or|and)\s*\(*\s*['"]?\s*\d""", re.IGNORECASE),
@@ -280,12 +281,152 @@ _SQLI_SIGNATURES = (
     re.compile(r"""(--\s|#|/\*)"""),
 )
 
+# Template injection (SSTI) — server-side template expression delimiters.
+_SSTI_SIGNATURES = (
+    re.compile(r"\{\{.*?\}\}", re.DOTALL),   # Jinja2 / Twig / Angular  {{ 7*7 }}
+    re.compile(r"\$\{.*?\}", re.DOTALL),     # JSP EL / Freemarker / JS  ${7*7}
+    re.compile(r"#\{.*?\}", re.DOTALL),      # Ruby / Thymeleaf / JSF    #{7*7}
+    re.compile(r"<%.*?%>", re.DOTALL),       # ERB / JSP scriptlet       <%= 7*7 %>
+    re.compile(r"\{%.*?%\}", re.DOTALL),     # Jinja2 / Twig statement   {% ... %}
+)
 
-def _matches_sqli_signature(value: str) -> bool:
-    """Pure: True when a parameter value carries a SQL-injection signature."""
+# Cross-site scripting — markup/JS breakout shapes.
+_XSS_SIGNATURES = (
+    re.compile(r"</?\s*script", re.IGNORECASE),   # <script> / </script>
+    re.compile(r"<\s*(svg|img|iframe|body|input)", re.IGNORECASE),
+    re.compile(r"\bon[a-z]+\s*=", re.IGNORECASE),  # onload= / onerror= handlers
+    re.compile(r"javascript:", re.IGNORECASE),
+)
+
+# Path traversal / LFI — directory-escape and OS-canary shapes.
+_TRAVERSAL_SIGNATURES = (
+    re.compile(r"\.\.[\\/]"),                 # ../  or  ..\
+    re.compile(r"%2e%2e", re.IGNORECASE),     # encoded ..
+    re.compile(r"%252e", re.IGNORECASE),      # double-encoded .
+    re.compile(r"\x00"),                      # null-byte truncation
+    re.compile(r"(etc/passwd|boot\.ini|win\.ini)", re.IGNORECASE),
+)
+
+_REGEX_FAMILIES: dict[str, tuple] = {
+    "sqli": _SQLI_SIGNATURES,
+    "ssti": _SSTI_SIGNATURES,
+    "xss": _XSS_SIGNATURES,
+    "traversal": _TRAVERSAL_SIGNATURES,
+}
+
+# Families whose family name in remediation metadata carries a descriptive
+# suffix (e.g. "sql_injection_boolean_union_comment") still resolve here by
+# prefix so a class need not know the exact registry key.
+_FAMILY_ALIASES = {
+    "sql_injection_boolean_union_comment": "sqli",
+    "sql": "sqli",
+    "template": "ssti",
+    "template_injection": "ssti",
+    "cross_site_scripting": "xss",
+    "path_traversal": "traversal",
+    "lfi": "traversal",
+}
+
+
+def _resolve_family(family: str) -> str:
+    """Map a declared signature-family label to a registry key."""
+    if not family:
+        return "sqli"
+    key = family.strip().lower()
+    if key in _REGEX_FAMILIES or key in ("url_allowlist", "jwt"):
+        return key
+    return _FAMILY_ALIASES.get(key, key)
+
+
+def _host_of(value: str) -> str:
+    """Pure: the lowercased host of an absolute URL, else '' (relative/no host)."""
+    try:
+        return (urlsplit(value.strip()).hostname or "").lower()
+    except (ValueError, AttributeError):
+        return ""
+
+
+def _matches_url_allowlist(value: str, allow) -> bool:
+    """
+    Pure: True (deny) when `value` is an absolute off-origin URL whose host is
+    NOT in `allow`. Relative paths and empty values carry no host and are never
+    denied (they cannot redirect/fetch off-origin). Inverted vs the regex
+    families: this is an allowlist, so the DEFAULT for a foreign host is deny.
+    """
     if not value:
         return False
-    return any(pattern.search(value) for pattern in _SQLI_SIGNATURES)
+    host = _host_of(value)
+    if not host:
+        return False  # relative path / same-origin — nothing to block
+    allowed = {str(h).strip().lower() for h in (allow or ())}
+    return host not in allowed
+
+
+def _decode_jwt_alg(token: str):
+    """Pure: best-effort ('alg', has_signature) from a compact JWS, else (None, None)."""
+    import base64
+
+    parts = token.strip().split(".")
+    if len(parts) not in (2, 3):
+        return None, None
+    header_seg = parts[0]
+    has_signature = len(parts) == 3 and parts[2] != ""
+    pad = "=" * (-len(header_seg) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(header_seg + pad)
+        header = json.loads(raw.decode("utf-8", "replace"))
+    except (ValueError, TypeError):
+        return None, has_signature
+    if not isinstance(header, dict):
+        return None, has_signature
+    return str(header.get("alg", "")).lower(), has_signature
+
+
+def _matches_jwt_forgery(value: str) -> bool:
+    """
+    Pure: True (deny) when `value` carries a forged/unsafe JWT — `alg=none`
+    (or any unsigned/empty-signature token). A well-formed signed token with a
+    real algorithm is forwarded; the pure judge then re-decides. This blocks the
+    forgery shape, not a specific secret.
+    """
+    if not value or "." not in value:
+        return False
+    # Pull the token out of a possible "Bearer <jwt>" wrapper.
+    token = value.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    alg, has_signature = _decode_jwt_alg(token)
+    if alg is None and has_signature is None:
+        return False  # not a JWT shape
+    if alg in ("none", ""):
+        return True
+    if has_signature is False:
+        return True
+    return False
+
+
+def _matches_signature(value: str, family: str, allow=()) -> bool:
+    """Pure: True when `value` carries a signature from the named family."""
+    if not value:
+        # url_allowlist and regex families never match empty; jwt likewise.
+        return False
+    resolved = _resolve_family(family)
+    if resolved == "url_allowlist":
+        return _matches_url_allowlist(value, allow)
+    if resolved == "jwt":
+        return _matches_jwt_forgery(value)
+    patterns = _REGEX_FAMILIES.get(resolved)
+    if not patterns:
+        return False
+    return any(pattern.search(value) for pattern in patterns)
+
+
+def _matches_sqli_signature(value: str) -> bool:
+    """Pure: True when a parameter value carries a SQL-injection signature.
+
+    Back-compat shim over the generalised :func:`_matches_signature`.
+    """
+    return _matches_signature(value, "sqli")
 
 
 @dataclass(frozen=True)
@@ -294,24 +435,39 @@ class RequestGuardRule:
     A provider-agnostic request-guard (virtual patch) for one injectable
     parameter on a route. The shield inspects the REQUEST — the value of
     `param` in the declared `location` — and refuses to forward it (403) when
-    it carries a SQL-injection signature, BEFORE the request ever reaches the
-    upstream.
+    it carries a signature from its `signature_family`, BEFORE the request ever
+    reaches the upstream.
 
     `location` is one of:
       query      -> the parameter is read from the URL query string
       body_form  -> the parameter is read from an urlencoded request body
       body_json  -> the parameter is a top-level key of a JSON request body
 
+    `signature_family` selects the payload-shape family to block — one guard,
+    many vulnerability classes:
+      sqli          -> SQL-injection boolean/UNION/comment shapes (default)
+      ssti          -> server-side template expression delimiters
+      xss           -> markup / JS breakout shapes
+      traversal     -> directory-escape / OS-canary shapes
+      url_allowlist -> INVERTED: deny an off-origin URL whose host is not in
+                       `allow` (open-redirect / SSRF egress control)
+      jwt           -> deny a forged/unsigned token (alg=none / no signature)
+
+    `allow` is consulted only by the `url_allowlist` family (the set of hosts
+    permitted as a redirect/fetch target).
+
     `param` empty means "guard every parameter in this location". This is a
-    stop-gap gateway control; the durable fix is a parameterised query in the
-    handler. Nothing here interprets a response — it only blocks a malicious
-    request shape so the deterministic judge can prove the differential is gone.
+    stop-gap gateway control; the durable fix lives in the handler. Nothing here
+    interprets a response — it only blocks a malicious request shape so the
+    deterministic judge can prove the differential is gone.
     """
 
     method: str
     path: str
     param: str = ""
     location: str = "query"
+    signature_family: str = "sqli"
+    allow: tuple = ()
 
 
 def _guard_candidate_values(
@@ -350,14 +506,15 @@ def _guard_candidate_values(
 
 def evaluate_request_guard(method, path, query, body, guard_rules) -> str:
     """
-    Pure request-side decision for the injection virtual patch.
+    Pure request-side decision for the request-guard virtual patch.
 
     Returns ``"deny"`` when any guard rule matches this method+path and the
-    guarded parameter value carries a SQL-injection signature, else
-    ``"forward"``. It inspects only the REQUEST (query/body), never a response,
-    so it cannot manufacture a verdict — it only refuses to relay a malicious
-    request, which is exactly what collapses the boolean differential the pure
-    judge then re-measures.
+    guarded parameter value carries a signature from that rule's
+    ``signature_family``, else ``"forward"``. It inspects only the REQUEST
+    (query/body), never a response, so it cannot manufacture a verdict — it only
+    refuses to relay a malicious request shape, which is exactly what collapses
+    the differential the pure judge then re-measures. One guard covers every
+    class (sqli / ssti / xss / traversal / url_allowlist / jwt).
     """
     method_norm = (method or "").strip().upper()
     path_norm = path or ""
@@ -366,8 +523,10 @@ def evaluate_request_guard(method, path, query, body, guard_rules) -> str:
             continue
         if rule.path != path_norm:
             continue
+        family = getattr(rule, "signature_family", "sqli")
+        allow = getattr(rule, "allow", ())
         for value in _guard_candidate_values(rule, query, body):
-            if _matches_sqli_signature(value):
+            if _matches_signature(value, family, allow):
                 return "deny"
     return "forward"
 
