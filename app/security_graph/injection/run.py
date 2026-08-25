@@ -22,7 +22,7 @@ target-specific logic: it acts entirely on the recovered surface metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from ..analysis import apply_validation_judgment, materialize_confirmed_findings
 from ..graph import SecurityGraph
@@ -76,6 +76,37 @@ def _expectation_for(
     )
 
 
+def _fill_path(url_or_template: str, param: str, encoded_value: str) -> str:
+    """
+    Place `encoded_value` into one path segment of `url_or_template`.
+
+    The hole is the segment equal to ``{param}`` (or any ``{...}`` marker); with
+    no marker, the LAST non-empty segment is the hole (the trailing-id
+    convention that live recon produces). `encoded_value` is already
+    percent-encoded by the caller (``/`` → ``%2F``) so the payload stays inside
+    the single chosen segment and can never leak into an adjacent segment, the
+    query string, or the fragment.
+    """
+    split = urlsplit(url_or_template)
+    segs = split.path.split("/")
+    named = "{" + (param or "") + "}"
+    idx = None
+    for i, seg in enumerate(segs):
+        if seg == named or (seg.startswith("{") and seg.endswith("}") and len(seg) >= 2):
+            idx = i
+            break
+    if idx is None:
+        for i in range(len(segs) - 1, -1, -1):
+            if segs[i] != "":
+                idx = i
+                break
+    if idx is not None:
+        segs[idx] = encoded_value
+    return urlunsplit(
+        (split.scheme, split.netloc, "/".join(segs), split.query, split.fragment)
+    )
+
+
 def _inject(
     expectation: InjectionExpectation,
     value: str,
@@ -84,9 +115,12 @@ def _inject(
     Build (url, body, headers) that place `value` in the declared parameter.
 
     Pure and target-agnostic: the payload goes exactly where the operator said
-    the parameter lives (query string / urlencoded body / JSON body).
+    the parameter lives (query string / urlencoded body / JSON body / URL path
+    segment).
     """
     url = expectation.endpoint_url
+    if expectation.location == "path":
+        return _fill_path(url, expectation.param, quote(value, safe="")), None, ()
     if expectation.location == "query":
         split = urlsplit(url)
         params = dict(parse_qsl(split.query, keep_blank_values=True))

@@ -173,6 +173,25 @@ def test_surface_spa_detection_by_tech():
     assert s.is_spa is True
 
 
+def test_surface_emits_path_segment_endpoint_for_trailing_id():
+    # A crawled URL with a concrete trailing resource id (…/users/1) yields a
+    # SECOND endpoint at location="path" — the id-in-path SQLi surface — beside
+    # the ordinary query endpoint. The param labels the resource segment before
+    # the id ("users"); the URL is kept concrete (its own baseline anchor).
+    s = Surface.from_recon(_recon(["http://shop.test/api/users/1"]), _findings())
+    path_eps = [e for e in s.endpoints if e.location == "path"]
+    assert len(path_eps) == 1
+    assert path_eps[0].url == "http://shop.test/api/users/1"
+    assert path_eps[0].params == ("users",)
+
+
+def test_surface_ignores_non_id_trailing_segment():
+    # An ordinary word segment (…/products/search) is NOT a resource id, so no
+    # path endpoint is synthesised — only the plain query endpoint.
+    s = Surface.from_recon(_recon(["http://shop.test/products/search"]), _findings())
+    assert all(e.location != "path" for e in s.endpoints)
+
+
 # ---- hypotheses -------------------------------------------------------------
 
 def _surface_with_param(param="id"):
@@ -194,6 +213,21 @@ def test_rule_based_redirect_param():
 def test_rule_based_login_broken_auth():
     s = Surface(target="http://shop.test", logins=("http://shop.test/login",), has_login=True)
     assert any(h.technique == "broken_auth" for h in H.rule_based_hypotheses(s))
+
+
+def test_rule_based_path_segment_emits_sqli_only():
+    # A path-located endpoint (id in the URL path) yields exactly ONE hypothesis:
+    # path-segment SQLi. The other injectable classes have no path placement, so
+    # posing them here would be dishonest breadth.
+    ep = Endpoint(url="http://shop.test/api/users/1", method="GET",
+                  params=("users",), location="path")
+    s = Surface(target="http://shop.test", endpoints=(ep,))
+    hyps = H.rule_based_hypotheses(s)
+    assert len(hyps) == 1
+    assert hyps[0].technique == "sql_injection"
+    assert hyps[0].location == "path"
+    assert hyps[0].param == "users"
+    assert hyps[0].provable is True
 
 
 def test_parse_drops_unknown_and_offhost():

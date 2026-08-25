@@ -44,11 +44,13 @@ from app.security_graph.ssrf.run import run_ssrf_investigation
 _VALID_SEV = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
 # hypothesis location vocab (query|body|path|header) -> security_graph probe
-# location vocab (query|body_form|body_json). Anything the single-probe judges
-# cannot place (path/header) falls back to the query string.
+# location vocab (query|body_form|body_json|path). "path" now maps through as a
+# first-class location (the injection class places the payload in one URL path
+# segment); only "header" still has no single-probe judge and falls back to the
+# query string.
 _LOC_MAP = {
     "query": "query", "body": "body_form", "body_form": "body_form",
-    "body_json": "body_json", "json": "body_json",
+    "body_json": "body_json", "json": "body_json", "path": "path",
 }
 
 # INCONCLUSIVE is the honest outcome when we cannot even build a probe; it maps
@@ -103,7 +105,15 @@ def _sev(hyp, default: str) -> str:
 
 def _baseline(hyp) -> str:
     """A benign anchor for the injection differential: the value the app really
-    served for this param if recon saw one, else the inert benign token."""
+    served for this param if recon saw one, else the inert benign token.
+
+    For a path-segment injection the anchor is the concrete value already sitting
+    in the injected segment — the LAST non-empty path segment of the crawled URL
+    (e.g. ``…/api/users/1`` → ``1``) — so the baseline probe reproduces the very
+    response recon observed, giving the differential a real anchor."""
+    if (getattr(hyp, "location", "") or "").lower() == "path":
+        segs = [s for s in urlsplit(hyp.url).path.split("/") if s]
+        return segs[-1] if segs else _BENIGN_TOKEN
     for key, value in parse_qsl(urlsplit(hyp.url).query, keep_blank_values=True):
         if key == hyp.param and value:
             return value

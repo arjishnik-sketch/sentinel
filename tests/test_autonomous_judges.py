@@ -75,6 +75,28 @@ def test_unknown_location_falls_back_to_query():
     assert fake.calls[0][1].checks[0].location == "query"
 
 
+def test_location_path_maps_through_and_anchors_last_segment():
+    # A path-located SQLi hypothesis maps location straight through to the
+    # security_graph "path" vocab (no silent degrade to "query"), and the baseline
+    # anchor is the concrete id already sitting in the injected segment
+    # (…/users/1 -> "1"), so the differential reproduces the response recon saw.
+    fake = FakeRun()
+    h = _h("sql_injection", "http://shop.test/api/users/1", param="users", location="path")
+    J.make_judge("sql_injection")(h, None, _run=fake)
+    base, policy = fake.calls[0]
+    assert base == "http://shop.test"
+    chk = policy.checks[0]
+    assert chk.location == "path"
+    assert chk.path == "/api/users/1"       # concrete crawled path = its own template
+    assert chk.baseline_value == "1"        # the id already in the segment = the anchor
+
+
+def test_loc_and_baseline_path_helpers_are_pure():
+    assert J._loc("path") == "path"
+    h = _h("sql_injection", "http://shop.test/rest/products/42", param="products", location="path")
+    assert J._baseline(h) == "42"
+
+
 # ---- honest INCONCLUSIVE fallbacks (never a manufactured verdict) -----------
 
 def test_param_required_technique_without_param_is_inconclusive_and_skips_run():

@@ -16,6 +16,7 @@ probe for SQL injection:
     GET  /rest/products/search  ?q=apple       (query)
     POST /rest/user/login       email=...      (urlencoded body)
     POST /api/search            {"term": ...}  (JSON body)
+    GET  /api/users/{id}        …/{id}/…       (path segment)
 
 The declared parameter makes no security claim on its own. It only poses a
 question the deterministic judge answers with a **three-way boolean
@@ -40,7 +41,11 @@ from typing import Any
 
 # Where a declared parameter lives in the request. Each maps to one unambiguous
 # way of injecting the payload — no target-specific body semantics are assumed.
-_LOCATIONS = frozenset({"query", "body_form", "body_json"})
+# "path" names a URL path segment: the check's `path` carries a ``{param}``
+# marker (or, absent a marker, the LAST non-empty segment is the hole), and the
+# payload is percent-encoded into that one segment so it can never leak into an
+# adjacent segment or the query string.
+_LOCATIONS = frozenset({"query", "body_form", "body_json", "path"})
 
 _ALLOWED_SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 

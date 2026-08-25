@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from ..graph import SecurityGraph
 from ..models import Experiment, Hypothesis, HttpRequestSpec, SecurityFinding
@@ -149,9 +149,18 @@ def synthesize_injection_remediation(
     if not split.scheme or not split.netloc:
         return None
 
+    # For a path-segment injection the concrete probe path (…/1) is NOT what the
+    # guard must key on — the payload request carries a DIFFERENT path (…/1'OR…),
+    # so an exact concrete match would never fire. Use the declared TEMPLATE
+    # (…/{id}) instead; the enforcer matches it structurally and inspects the
+    # decoded hole segment. Every other location keeps the concrete request path.
     rule = InjectionControlRule(
         method=expectation.method.strip().upper() or "GET",
-        path=split.path or "/",
+        path=(
+            expectation.path
+            if expectation.location == "path"
+            else (split.path or "/")
+        ),
         param=expectation.param,
         location=expectation.location,
         severity=expectation.severity,
@@ -209,13 +218,50 @@ def _portable_json(rule: InjectionControlRule, upstream_base: str) -> str:
 _GATEWAY_SIGNATURE = r"(\x27|\x22|;|--|/\*|\bunion\b|\b(or|and)\b\s+[\x27\x22]?\d|\d\s*=\s*\d)"
 
 
+def _path_prefix(template: str, param: str) -> str:
+    """The fixed leading path portion before the injected hole segment.
+
+    The best-effort gateway matchers cannot express a mid-path hole, so for a
+    path-segment injection they key on this static prefix (e.g. ``/api/users``
+    for ``/api/users/{id}``) and then SQLi-scan the URI. The enforcer proper is
+    exact and template-aware; this is only the exported stop-gap config.
+    """
+    segs = template.split("/")
+    named = "{" + (param or "") + "}"
+    idx = None
+    for i, seg in enumerate(segs):
+        if seg == named or (seg.startswith("{") and seg.endswith("}") and len(seg) >= 2):
+            idx = i
+            break
+    if idx is None:
+        for i in range(len(segs) - 1, -1, -1):
+            if segs[i] != "":
+                idx = i
+                break
+    if idx is None:
+        return template or "/"
+    return "/".join(segs[:idx]) or "/"
+
+
 def _nginx(rule: InjectionControlRule, upstream_base: str) -> str:
-    matched = f"$arg_{rule.param}" if rule.location == "query" else "$request_body"
+    if rule.location == "query":
+        matched = f"$arg_{rule.param}"
+    elif rule.location == "path":
+        matched = "$uri"          # nginx-decoded request path (the injected segment lives here)
+    else:
+        matched = "$request_body"
+    # A mid-path hole cannot be an exact `location =` block; match the fixed
+    # prefix instead (prefix `location`, no `=`).
+    if rule.location == "path":
+        prefix = _path_prefix(rule.path, rule.param)
+        location_line = f"location {prefix} {{"
+    else:
+        location_line = f"location = {rule.path} {{"
     return "\n".join(
         [
             f"# Sentinel remediation — SQL-injection request-guard for '{rule.param}'",
             f"# on {rule.method} {rule.path} ({rule.location}). Benign traffic is forwarded.",
-            f"location = {rule.path} {{",
+            location_line,
             f'    if ({matched} ~* "{_GATEWAY_SIGNATURE}") {{',
             "        return 403;",
             "    }",
@@ -232,8 +278,16 @@ def _modsecurity(rule: InjectionControlRule, upstream_base: str) -> str:
         target = f"ARGS_GET:{rule.param}"
     elif rule.location == "body_form":
         target = f"ARGS_POST:{rule.param}"
+    elif rule.location == "path":
+        target = "REQUEST_URI"
     else:
         target = f"ARGS:{rule.param}"
+    # A mid-path hole cannot be matched literally; key on the fixed prefix.
+    begins_with = (
+        _path_prefix(rule.path, rule.param)
+        if rule.location == "path"
+        else rule.path
+    )
     return "\n".join(
         [
             "# Sentinel remediation — ModSecurity virtual patch (SQL injection)",
@@ -241,7 +295,7 @@ def _modsecurity(rule: InjectionControlRule, upstream_base: str) -> str:
             f'SecRule REQUEST_METHOD "@streq {rule.method}" \\',
             f'    "id:1000001,phase:2,chain,deny,status:403,log,\\',
             f"     msg:'Sentinel: SQLi request-guard on {rule.param}'\"",
-            f'    SecRule REQUEST_URI "@beginsWith {rule.path}" "chain"',
+            f'    SecRule REQUEST_URI "@beginsWith {begins_with}" "chain"',
             f'        SecRule {target} "@detectSQLi" "t:none,t:urlDecodeUni"',
             "# NOTE: virtual patch. The durable fix is a parameterised query.",
         ]
@@ -249,15 +303,24 @@ def _modsecurity(rule: InjectionControlRule, upstream_base: str) -> str:
 
 
 def _caddy(rule: InjectionControlRule, upstream_base: str) -> str:
+    path_matcher = (
+        f"{_path_prefix(rule.path, rule.param)}/*"
+        if rule.location == "path"
+        else rule.path
+    )
     lines = [
         f"# Sentinel remediation — SQL-injection request-guard for '{rule.param}'",
         f"# on {rule.method} {rule.path}. Best-effort matcher; prefer ModSecurity / handler fix.",
         "@sqli {",
         f"    method {rule.method}",
-        f"    path {rule.path}",
+        f"    path {path_matcher}",
     ]
     if rule.location == "query":
         lines.append(f"    query {rule.param}=*'* {rule.param}=*--* {rule.param}=*=*")
+    elif rule.location == "path":
+        lines.append(f"    path {_path_prefix(rule.path, rule.param)}/*'* "
+                     f"{_path_prefix(rule.path, rule.param)}/*--* "
+                     f"{_path_prefix(rule.path, rule.param)}/*=*")
     else:
         lines.append('    header Content-Type *')
     lines += [
@@ -281,6 +344,30 @@ def render_injection_artifacts(
         caddy=_caddy(rule, upstream_base),
     )
 
+def _fill_path(url_or_template: str, param: str, encoded_value: str) -> str:
+    """Place `encoded_value` in one path segment. Mirror of
+    :func:`app.security_graph.injection.run._fill_path` (the run/remediation
+    ``_inject`` pair is intentionally duplicated, one per module)."""
+    split = urlsplit(url_or_template)
+    segs = split.path.split("/")
+    named = "{" + (param or "") + "}"
+    idx = None
+    for i, seg in enumerate(segs):
+        if seg == named or (seg.startswith("{") and seg.endswith("}") and len(seg) >= 2):
+            idx = i
+            break
+    if idx is None:
+        for i in range(len(segs) - 1, -1, -1):
+            if segs[i] != "":
+                idx = i
+                break
+    if idx is not None:
+        segs[idx] = encoded_value
+    return urlunsplit(
+        (split.scheme, split.netloc, "/".join(segs), split.query, split.fragment)
+    )
+
+
 def _inject(
     endpoint_url: str,
     param: str,
@@ -288,6 +375,8 @@ def _inject(
     value: str,
 ) -> tuple[str, str | None, tuple[tuple[str, str], ...]]:
     """Place `value` in the declared parameter at `endpoint_url`. Pure."""
+    if location == "path":
+        return _fill_path(endpoint_url, param, quote(value, safe="")), None, ()
     if location == "query":
         split = urlsplit(endpoint_url)
         params = dict(parse_qsl(split.query, keep_blank_values=True))

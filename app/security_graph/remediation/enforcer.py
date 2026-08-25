@@ -24,7 +24,7 @@ import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 from .model import AccessControlRule
@@ -476,6 +476,12 @@ class RequestGuardRule:
       query      -> the parameter is read from the URL query string
       body_form  -> the parameter is read from an urlencoded request body
       body_json  -> the parameter is a top-level key of a JSON request body
+      path       -> the parameter occupies one URL path segment; `path` carries a
+                    ``{param}`` marker (or, absent a marker, the LAST non-empty
+                    segment is the hole). The guard matches the route STRUCTURALLY
+                    (equal segment count, fixed segments equal) and inspects the
+                    URL-decoded hole segment — the payload request path differs
+                    from the benign one, so an exact match would never fire.
       header     -> the parameter names a request header (e.g. Authorization);
                     empty `param` inspects every header value
 
@@ -570,6 +576,42 @@ def _guard_candidate_values(
     return values
 
 
+def _path_template_hole(template: str, param: str, request_path: str):
+    """Pure: the URL-decoded value in the injected hole of `template` for a
+    concrete `request_path`, or None when the request path does not match the
+    template structurally.
+
+    The hole is the segment equal to ``{param}`` (or any ``{...}`` marker); with
+    no marker it is the LAST non-empty segment (the trailing-id convention live
+    recon produces). Every OTHER segment must be equal and the segment counts
+    must match — so the guard fires only on the guarded route and reads exactly
+    the injected segment, never an adjacent one or a different endpoint.
+    """
+    t_segs = (template or "").split("/")
+    r_segs = (request_path or "").split("/")
+    if len(t_segs) != len(r_segs):
+        return None
+    named = "{" + (param or "") + "}"
+    hole_idx = None
+    for i, seg in enumerate(t_segs):
+        if seg == named or (seg.startswith("{") and seg.endswith("}") and len(seg) >= 2):
+            hole_idx = i
+            break
+    if hole_idx is None:
+        for i in range(len(t_segs) - 1, -1, -1):
+            if t_segs[i] != "":
+                hole_idx = i
+                break
+    if hole_idx is None:
+        return None
+    for i, (t_seg, r_seg) in enumerate(zip(t_segs, r_segs)):
+        if i == hole_idx:
+            continue
+        if t_seg != r_seg:
+            return None
+    return unquote(r_segs[hole_idx])
+
+
 def evaluate_request_guard(method, path, query, body, guard_rules, headers=None) -> str:
     """
     Pure request-side decision for the request-guard virtual patch.
@@ -577,20 +619,31 @@ def evaluate_request_guard(method, path, query, body, guard_rules, headers=None)
     Returns ``"deny"`` when any guard rule matches this method+path and the
     guarded parameter value carries a signature from that rule's
     ``signature_family``, else ``"forward"``. It inspects only the REQUEST
-    (query/body/headers), never a response, so it cannot manufacture a verdict —
-    it only refuses to relay a malicious request shape, which is exactly what
-    collapses the differential the pure judge then re-measures. One guard covers
-    every class (sqli / ssti / xss / traversal / url_allowlist / jwt).
+    (query/body/headers/path), never a response, so it cannot manufacture a
+    verdict — it only refuses to relay a malicious request shape, which is
+    exactly what collapses the differential the pure judge then re-measures. One
+    guard covers every class (sqli / ssti / xss / traversal / url_allowlist /
+    jwt).
     """
     method_norm = (method or "").strip().upper()
     path_norm = path or ""
     for rule in guard_rules:
         if rule.method.strip().upper() != method_norm:
             continue
-        if rule.path != path_norm:
-            continue
         family = getattr(rule, "signature_family", "sqli")
         allow = getattr(rule, "allow", ())
+        # Path-segment injection: the payload request path differs from the
+        # benign baseline path, so match the declared TEMPLATE structurally and
+        # inspect the decoded hole segment rather than exact-matching the path.
+        if getattr(rule, "location", "query") == "path":
+            hole = _path_template_hole(rule.path, rule.param, path_norm)
+            if hole is None:
+                continue
+            if _matches_signature(hole, family, allow):
+                return "deny"
+            continue
+        if rule.path != path_norm:
+            continue
         for value in _guard_candidate_values(rule, query, body, headers):
             if _matches_signature(value, family, allow):
                 return "deny"

@@ -30,7 +30,7 @@ collapse) while still forwarding the benign baseline (200) — the honest fix.
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, parse_qsl, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urlsplit
 
 import pytest
 
@@ -74,6 +74,20 @@ _QUERY_CHECK = {
     "param": "q",
     "baseline_value": BASELINE_VALUE,
     "location": "query",
+    "severity": "HIGH",
+}
+
+# A path-segment injectable surface: the id sits in the URL PATH, declared with a
+# ``{id}`` marker so the engine fills exactly that segment (and the enforcer
+# matches the route structurally while inspecting the decoded hole).
+USER_PATH = "/api/users/{id}"
+PATH_BASELINE = "1"
+_PATH_CHECK = {
+    "method": "GET",
+    "path": USER_PATH,
+    "param": "id",
+    "baseline_value": PATH_BASELINE,
+    "location": "path",
     "severity": "HIGH",
 }
 
@@ -255,11 +269,27 @@ class _CannedInjectionExecutor(ExperimentExecutor):
 
     kind = "injection_check"
 
-    def __init__(self, responder, *, param="q", location="query", latency=None):
+    def __init__(self, responder, *, param="q", location="query", latency=None,
+                 path_template=None):
         self._responder = responder
         self._param = param
         self._location = location
         self._latency = latency
+        self._path_template = path_template
+
+    def _path_hole_index(self, req_segs) -> int:
+        """The index of the injected segment: the ``{param}`` marker in the
+        template if one was given, else the LAST non-empty segment."""
+        if self._path_template:
+            t_segs = self._path_template.split("/")
+            if len(t_segs) == len(req_segs):
+                for i, seg in enumerate(t_segs):
+                    if seg.startswith("{") and seg.endswith("}") and len(seg) >= 2:
+                        return i
+        for i in range(len(req_segs) - 1, -1, -1):
+            if req_segs[i] != "":
+                return i
+        return -1
 
     def _injected_value(self, experiment) -> str:
         req = experiment.request
@@ -268,6 +298,10 @@ class _CannedInjectionExecutor(ExperimentExecutor):
         if self._location == "query":
             parsed = dict(parse_qsl(urlsplit(req.url).query, keep_blank_values=True))
             return parsed.get(self._param, "")
+        if self._location == "path":
+            segs = urlsplit(req.url).path.split("/")
+            idx = self._path_hole_index(segs)
+            return unquote(segs[idx]) if 0 <= idx < len(segs) else ""
         if self._location == "body_form":
             parsed = dict(parse_qsl(req.body or "", keep_blank_values=True))
             return parsed.get(self._param, "")
@@ -315,7 +349,8 @@ def _matrix(check=None):
     )
 
 
-def _resolved_graph(responder, *, check=None, param="q", location="query", latency=None):
+def _resolved_graph(responder, *, check=None, param="q", location="query",
+                    latency=None, path_template=None):
     """Seed one injectable surface and drive it to a verdict with a canned model."""
     graph = SecurityGraph()
     results = run_injection_investigation(
@@ -323,7 +358,8 @@ def _resolved_graph(responder, *, check=None, param="q", location="query", laten
         _matrix(check),
         target_base=TARGET_BASE,
         executor=_CannedInjectionExecutor(
-            responder, param=param, location=location, latency=latency
+            responder, param=param, location=location, latency=latency,
+            path_template=path_template,
         ),
     )
     return graph, results
@@ -698,6 +734,111 @@ def test_remediate_non_injection_finding_is_not_applicable():
     foreign = replace(_confirmed_finding(graph), kind="authorization_policy_violation")
     outcome = remediate_injection_and_prove(graph, foreign, use_enforcer=False)
     assert outcome.result == "NOT_APPLICABLE"
+
+
+# --- path-segment injection: the id-in-path SQLi surface --------------------
+# The payload occupies one URL path segment (…/users/1' OR '1'='1) instead of a
+# query/body parameter. The pure judge is location-agnostic (it reads only the
+# status/length fingerprint), so these prove the PLACEMENT + enforcement plumbing
+# for a path hole end to end, reusing the very same backend models.
+
+def _path_graph(responder, **kw):
+    return _resolved_graph(
+        responder, check=dict(_PATH_CHECK), param="id", location="path",
+        path_template=USER_PATH, **kw
+    )
+
+
+def test_path_segment_injection_is_validated_and_confirmed():
+    graph, results = _path_graph(_injectable_body)
+    assert len(results) == 1
+    assert results[0].status == "VALIDATED"
+    assert results[0].param == "id" and results[0].location == "path"
+    assert results[0].baseline_status_code == 200
+    assert graph.hypotheses[results[0].hypothesis_id].status == "CONFIRMED"
+    finding = _confirmed_finding(graph)
+    assert finding.kind == "injection" and finding.severity == "HIGH"
+
+
+def test_path_segment_parameterised_is_disproved_no_finding():
+    # A prepared statement in the id handler: length-matched TRUE/FALSE segments
+    # collapse -> no boolean toggled the query -> DISPROVED, nothing manufactured.
+    graph, results = _path_graph(_safe_body)
+    assert results[0].status == "DISPROVED"
+    assert not list(graph.findings_for(kind="injection", status="OPEN"))
+
+
+def test_synthesize_path_injection_uses_template_path():
+    # The guard must key on the declared TEMPLATE (…/{id}), not the concrete
+    # baseline path (…/1) — the payload probe carries a DIFFERENT path, so an
+    # exact concrete match would never fire.
+    graph, _ = _path_graph(_injectable_body)
+    plan = synthesize_injection_remediation(graph, _confirmed_finding(graph))
+    assert plan is not None
+    assert plan.rule.location == "path"
+    assert plan.rule.path == USER_PATH                 # the template, not …/1
+    assert plan.rule.param == "id"
+    assert plan.endpoint_url == TARGET_BASE + USER_PATH
+
+
+def test_render_path_injection_artifacts_are_prefix_scoped():
+    # The best-effort gateway configs cannot express a mid-path hole; the MATCHER
+    # directives must fall back to the fixed prefix and SQLi-scan the URI (never a
+    # literal `{id}` matcher nor an exact `location = …/{id}` block). The template
+    # may still appear in a `#` comment for the operator — that is documentation,
+    # not a match target — so the marker ban applies to directive lines only.
+    graph, _ = _path_graph(_injectable_body)
+    plan = synthesize_injection_remediation(graph, _confirmed_finding(graph))
+    artifacts = render_injection_artifacts(plan.rule, plan.upstream_base)
+    for config in (artifacts.nginx, artifacts.modsecurity, artifacts.caddy):
+        assert config.strip()
+        directives = "\n".join(
+            line for line in config.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert "{id}" not in directives            # no template marker in a matcher
+    assert "location /api/users {" in artifacts.nginx   # prefix block, not `location =`
+    assert "location = " not in artifacts.nginx         # ...and never an exact block
+    assert "$uri" in artifacts.nginx                    # path payload lives in the URI
+    assert "@beginsWith /api/users" in artifacts.modsecurity
+    assert "REQUEST_URI" in artifacts.modsecurity       # scan the decoded URI
+
+
+def test_evaluate_request_guard_path_denies_payload_forwards_benign():
+    rule = RequestGuardRule(method="GET", path=USER_PATH, param="id", location="path")
+    # Benign id -> forwarded; the injected segment carrying a SQLi signature -> denied.
+    assert evaluate_request_guard("GET", "/api/users/1", "", None, (rule,)) == "forward"
+    assert (
+        evaluate_request_guard("GET", "/api/users/1'%20OR%20'1'%3D'1", "", None, (rule,))
+        == "deny"
+    )
+    # A different route (fixed segment mismatch) and a different segment COUNT are
+    # both untouched by this guard — it fires only on its own structural route.
+    assert (
+        evaluate_request_guard("GET", "/api/orders/1'%20OR%20'1'%3D'1", "", None, (rule,))
+        == "forward"
+    )
+    assert (
+        evaluate_request_guard("GET", "/api/users/1'%20OR%20'1'%3D'1/reviews", "", None, (rule,))
+        == "forward"
+    )
+
+
+def test_remediate_path_segment_injection_fix_proven():
+    graph, _ = _path_graph(_injectable_body)
+    outcome = remediate_injection_and_prove(
+        graph,
+        _confirmed_finding(graph),
+        before_executor=_CannedInjectionExecutor(
+            _injectable_body, param="id", location="path", path_template=USER_PATH
+        ),
+        after_executor=_CannedInjectionExecutor(
+            _guarded_body, param="id", location="path", path_template=USER_PATH
+        ),
+        use_enforcer=False,
+    )
+    assert outcome.result == "FIX_PROVEN"
+    assert outcome.verification.before_status == "VALIDATED"
+    assert outcome.verification.after_status == "DISPROVED"
 
 
 # --- live integration: real reverse proxy blocks the payloads, keeps benign --

@@ -64,9 +64,20 @@ class Hypothesis:
 
 def rule_based_hypotheses(surface):
     """Deterministic floor: injectable params -> SQLi/XSS/traversal; redirect-shaped
-    params -> open_redirect. Guarantees the loop works with the LLM entirely off."""
+    params -> open_redirect; a trailing resource id in the path -> path-segment SQLi.
+    Guarantees the loop works with the LLM entirely off."""
     out = []
     for ep in surface.endpoints:
+        # A trailing resource id in the URL path (…/users/1) is a SQLi surface in
+        # its own right. Only sql_injection is posed here: the id-in-path shape is
+        # the canonical path-segment injection, and the other classes have no
+        # path placement, so proposing them would be dishonest breadth.
+        if getattr(ep, "location", "query") == "path":
+            for p in ep.params:
+                out.append(Hypothesis(
+                    "sql_injection", ep.url, ep.method, p, "path",
+                    f"resource id in path segment '{p}'", "HIGH", "rule"))
+            continue
         for p in ep.params:
             for tech, sev in (("sql_injection", "HIGH"), ("xss", "MEDIUM"), ("path_traversal", "HIGH")):
                 out.append(Hypothesis(tech, ep.url, ep.method, p, "query", f"observed param '{p}'", sev, "rule"))
