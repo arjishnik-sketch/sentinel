@@ -35,6 +35,113 @@ def test_ask_json_unparseable():
     assert res.ok is False
 
 
+# ---- pluggable providers (API-key models) ----------------------------------
+
+def test_resolve_provider_defaults_to_offline_ollama():
+    p = L.resolve_provider({})                       # empty env, no key needed
+    assert p.name == "ollama"
+    assert p.transport is L._ollama_json_chat
+
+
+def test_resolve_provider_anthropic_binds_key_and_routes(monkeypatch):
+    seen = {}
+
+    def spy(system, user, *, model, url, timeout, num_predict, api_key):
+        seen.update(model=model, url=url, api_key=api_key)
+        return '{"ok": true}'
+
+    monkeypatch.setattr(L, "_anthropic_json_chat", spy)
+    p = L.resolve_provider(
+        {"SENTINEL_LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-secret"}
+    )
+    assert p.name == "anthropic"
+    assert p.model == "claude-sonnet-5"              # strong overridable default
+    assert "api.anthropic.com" in p.url
+    p.transport("s", "u", model=p.model, url=p.url, timeout=1, num_predict=8)
+    assert seen["api_key"] == "sk-secret"            # key bound into transport
+    assert "sk-secret" not in repr(p)                # ...and never leaked by repr
+
+
+def test_resolve_provider_openai_binds_key_and_routes(monkeypatch):
+    seen = {}
+
+    def spy(system, user, *, model, url, timeout, num_predict, api_key):
+        seen["api_key"] = api_key
+        return "{}"
+
+    monkeypatch.setattr(L, "_openai_json_chat", spy)
+    p = L.resolve_provider(
+        {"SENTINEL_LLM_PROVIDER": "openai", "OPENAI_API_KEY": "sk-oai"}
+    )
+    assert p.name == "openai" and p.model == "gpt-4o-mini"
+    p.transport("s", "u", model=p.model, url=p.url, timeout=1, num_predict=8)
+    assert seen["api_key"] == "sk-oai"
+
+
+def test_resolve_provider_model_override_wins():
+    p = L.resolve_provider(
+        {
+            "SENTINEL_LLM_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "sk-x",
+            "SENTINEL_LLM_MODEL": "claude-opus-5",
+        }
+    )
+    assert p.model == "claude-opus-5"
+
+
+def test_resolve_provider_compatible_requires_base_url():
+    import pytest
+
+    with pytest.raises(L.LLMConfigError):
+        L.resolve_provider({"SENTINEL_LLM_PROVIDER": "compatible"})
+
+
+def test_resolve_provider_compatible_allows_keyless_gateway():
+    p = L.resolve_provider(
+        {"SENTINEL_LLM_PROVIDER": "compatible", "SENTINEL_LLM_URL": "http://gw.local/v1"}
+    )
+    assert p.name == "compatible" and p.url == "http://gw.local/v1"
+
+
+def test_resolve_provider_missing_key_is_config_error_not_prompt():
+    import pytest
+
+    # No key, and pytest's stdin is not a TTY, so this must raise rather than
+    # block on getpass. ask_json turns this into a non-fatal fallback.
+    with pytest.raises(L.LLMConfigError):
+        L.resolve_provider({"SENTINEL_LLM_PROVIDER": "anthropic"})
+
+
+def test_resolve_provider_unknown_name_is_config_error():
+    import pytest
+
+    with pytest.raises(L.LLMConfigError):
+        L.resolve_provider({"SENTINEL_LLM_PROVIDER": "totally-bogus"})
+
+
+def test_ask_json_uses_resolved_provider_when_no_transport(monkeypatch):
+    calls = {}
+
+    def fake_transport(system, user, *, model, url, timeout, num_predict):
+        calls.update(model=model, url=url)
+        return '{"routed": true}'
+
+    fake = L.LLMProvider(name="fake", transport=fake_transport, model="M", url="U")
+    monkeypatch.setattr(L, "resolve_provider", lambda: fake)
+    res = L.ask_json("s", "u")                        # no transport injected
+    assert res.ok and res.data == {"routed": True}
+    assert calls == {"model": "M", "url": "U"}        # provider's model/url used
+
+
+def test_ask_json_config_error_is_nonfatal(monkeypatch):
+    def boom():
+        raise L.LLMConfigError("no key")
+
+    monkeypatch.setattr(L, "resolve_provider", boom)
+    res = L.ask_json("s", "u")
+    assert res.ok is False and "no key" in res.error
+
+
 # ---- surface ----------------------------------------------------------------
 
 def _recon(crawl, tech=()):

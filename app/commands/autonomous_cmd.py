@@ -590,6 +590,13 @@ def _usage() -> Panel:
          "patch+prove. Works on any http/https target; nothing off-scope is "
          "ever probed.\n\n", _C_DIM),
         ("optional environment:\n", "white"),
+        ("  SENTINEL_LLM_PROVIDER     ollama (default, offline) | anthropic | "
+         "openai | compatible\n", _C_DIM),
+        ("  ANTHROPIC_API_KEY / OPENAI_API_KEY   key for a hosted model "
+         "(env or one-time getpass; never stored)\n", _C_DIM),
+        ("  SENTINEL_LLM_MODEL        override the model id (e.g. claude-opus-5)\n", _C_DIM),
+        ("  SENTINEL_LLM_URL          base URL for a self-hosted / compatible "
+         "gateway\n", _C_DIM),
         ("  SENTINEL_SESSION_COOKIE   run the session-aware stage against a "
          "captured jar\n", _C_DIM),
         ("  SENTINEL_SESSION_URL      URL for the session stage (default: target)\n", _C_DIM),
@@ -598,6 +605,31 @@ def _usage() -> Panel:
     )
     return Panel(body, title=f"[{_C_PRIMARY}]▐ AUTONOMOUS[/{_C_PRIMARY}]",
                  border_style=_C_PRIMARY, padding=(1, 2))
+
+
+def _provider_line(use_llm: bool) -> Text:
+    """One dim line naming the active proposal backend — provider · model — so
+    the operator always knows what is generating hypotheses. Never prints a key,
+    and never raises: a misconfigured provider degrades to the rule floor."""
+    if not use_llm:
+        return Text(
+            "model   LLM disabled — deterministic rule floor only",
+            style=_C_DIM,
+        )
+    try:
+        from app.autonomous.llm import resolve_provider
+        provider = resolve_provider()
+    except Exception as exc:  # missing key / bad config → honest fallback note
+        return Text(
+            f"model   LLM misconfigured ({_short(str(exc), 60)}) — "
+            "falling back to the deterministic rule floor",
+            style=_C_WARN,
+        )
+    return Text(
+        f"model   {provider.name} · {provider.model}   "
+        "(proposes only — a pure judge disposes)",
+        style=_C_DIM,
+    )
 
 
 def run(arg, *, _recon=None, _index=None, _judges=None, use_llm=True):
@@ -611,6 +643,7 @@ def run(arg, *, _recon=None, _index=None, _judges=None, use_llm=True):
         return None
 
     console.print(_banner(target))
+    console.print(_provider_line(use_llm))
 
     # DISCOVER — live recon → orchestrator recon/findings dicts.
     with console.status(f"[{_C_OK}]running live recon…[/{_C_OK}]", spinner="dots"):
