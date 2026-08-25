@@ -215,6 +215,40 @@ def test_rule_based_login_broken_auth():
     assert any(h.technique == "broken_auth" for h in H.rule_based_hypotheses(s))
 
 
+def test_rule_based_login_poses_credential_body_sqli():
+    # A form-login surface yields auth-bypass SQLi on BOTH conventional credential
+    # fields (we don't know which the target uses), as body_form POSTs anchored on
+    # the login's real legitimate baseline (401/403), beside the broken_auth lead.
+    s = Surface(target="http://shop.test", logins=("http://shop.test/login",), has_login=True)
+    hyps = H.rule_based_hypotheses(s)
+    sqli = [h for h in hyps if h.technique == "sql_injection"]
+    assert {h.param for h in sqli} == {"email", "username"}
+    assert all(h.location == "body_form" and h.method == "POST" for h in sqli)
+    assert all(h.success_statuses == (200, 401, 403) for h in sqli)
+    assert all(h.provable for h in sqli)
+    assert any(h.technique == "broken_auth" for h in hyps)
+
+
+def test_rule_based_login_json_api_uses_body_json():
+    # A REST/JSON auth endpoint gets body_json (the content-type adapts to shape).
+    s = Surface(target="http://shop.test",
+                logins=("http://shop.test/rest/user/login",), has_login=True)
+    sqli = [h for h in H.rule_based_hypotheses(s) if h.technique == "sql_injection"]
+    assert sqli and all(h.location == "body_json" for h in sqli)
+
+
+def test_rule_based_login_sqli_from_js_mined_api():
+    # A login mined from JavaScript lands in `apis`, not `logins` (has_login False),
+    # yet the auth-bypass SQLi is still posed — the SPA/JSON case `logins` misses.
+    s = Surface(target="http://shop.test",
+                apis=("http://shop.test/rest/user/login",), is_spa=True)
+    hyps = H.rule_based_hypotheses(s)
+    sqli = [h for h in hyps if h.technique == "sql_injection"]
+    assert {h.param for h in sqli} == {"email", "username"}
+    assert all(h.location == "body_json" for h in sqli)
+    assert not any(h.technique == "broken_auth" for h in hyps)  # no login page → no lead
+
+
 def test_rule_based_path_segment_emits_sqli_only():
     # A path-located endpoint (id in the URL path) yields exactly ONE hypothesis:
     # path-segment SQLi. The other injectable classes have no path placement, so

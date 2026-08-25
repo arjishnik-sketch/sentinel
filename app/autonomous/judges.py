@@ -134,6 +134,18 @@ def _injection_check(hyp, path):
     )
 
 
+def _injection_policy_kwargs(hyp):
+    """Success-status anchor for the InjectionPolicy, when the hypothesis carries
+    one. A login's legitimate baseline is 401/403 (bad credential), not 2xx, so
+    the pure judge's anchor gate would return INCONCLUSIVE under its 2xx default;
+    forwarding the declared statuses gives the differential a real anchor. Absent
+    on ordinary query/path hypotheses → the policy keeps its 2xx default."""
+    statuses = getattr(hyp, "success_statuses", None)
+    if not statuses:
+        return {}
+    return {"success_statuses": tuple(int(s) for s in statuses)}
+
+
 def _paramcheck_builder(cls, default_sev):
     def build(hyp, path):
         return cls(
@@ -153,12 +165,15 @@ class _JudgeSpec:
     run_fn: Callable
     build_check: Callable          # (hyp, path) -> a frozen Check
     needs_param: bool = True       # cors is the lone param-free class
+    policy_kwargs: Callable = lambda hyp: {}   # extra policy ctor kwargs from hyp
 
 
 # technique -> how to prove it. Keys MUST equal Hypothesis.technique for the
 # provable (differential) techniques; anything absent stays an honest LEAD.
 _SPECS = {
-    "sql_injection": _JudgeSpec(InjectionPolicy, run_injection_investigation, _injection_check),
+    "sql_injection": _JudgeSpec(
+        InjectionPolicy, run_injection_investigation, _injection_check,
+        policy_kwargs=_injection_policy_kwargs),
     "xss": _JudgeSpec(XSSPolicy, run_xss_investigation, _paramcheck_builder(XSSCheck, "MEDIUM")),
     "path_traversal": _JudgeSpec(
         TraversalPolicy, run_path_traversal_investigation,
@@ -186,7 +201,7 @@ def _adjudicate(hyp, spec, *, _run, _graph):
         return (_INCONCLUSIVE, f"cannot derive target origin from {hyp.url!r}", None)
 
     check = spec.build_check(hyp, _path(hyp.url))
-    policy = spec.policy_cls(checks=(check,))
+    policy = spec.policy_cls(checks=(check,), **spec.policy_kwargs(hyp))
     graph = _graph()
     results = _run(graph, policy, target_base=origin)
     if not results:

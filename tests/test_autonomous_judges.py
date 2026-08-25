@@ -69,6 +69,28 @@ def test_location_body_maps_to_body_form():
     assert chk.location == "body_form" and chk.method == "POST"
 
 
+def test_location_body_json_maps_and_forwards_success_statuses():
+    # A login-body SQLi hypothesis maps location straight through to body_json AND
+    # carries its 401/403 anchor onto the InjectionPolicy, so the pure judge's
+    # baseline gate (which defaults to 2xx) accepts a login's legitimate baseline.
+    fake = FakeRun()
+    h = Hypothesis("sql_injection", "http://shop.test/rest/user/login", "POST",
+                   "email", "body_json", success_statuses=(200, 401, 403))
+    J.make_judge("sql_injection")(h, None, _run=fake)
+    _base, policy = fake.calls[0]
+    assert policy.checks[0].location == "body_json"
+    assert policy.success_statuses == (200, 401, 403)
+
+
+def test_injection_policy_keeps_2xx_default_without_success_statuses():
+    # An ordinary query hypothesis carries no anchor override → the InjectionPolicy
+    # keeps its conservative 2xx default (no silent broadening of the anchor).
+    fake = FakeRun()
+    J.make_judge("sql_injection")(_h("sql_injection", "http://shop.test/rest/search", param="q"),
+                                  None, _run=fake)
+    assert fake.calls[0][1].success_statuses == tuple(range(200, 300))
+
+
 def test_unknown_location_falls_back_to_query():
     fake = FakeRun()
     J.make_judge("xss")(_h("xss", param="q", location="header"), None, _run=fake)
