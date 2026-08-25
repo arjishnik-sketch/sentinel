@@ -1,10 +1,12 @@
-# Sentinel — Master Roadmap: 12 Vulnerability Classes + Provable Chaining
+# Sentinel — Master Roadmap: the Autonomous Web Pentester
 
 > **This is the canonical reference document for finishing Sentinel.**
-> It specifies the 7 remaining vulnerability classes (bringing the total to 12) and
-> the *provable chaining* capstone. Every item here is engineered to preserve the
-> hard epistemic contract that makes Sentinel defensible. Build against this file;
-> update it as classes land.
+> **Part I** (§0–§9) is the proof-carrying core: 12 vulnerability classes + provable
+> chaining, all shipped. **Part II** (§10–§14) is the standing mandate — turning that
+> core into a dynamic, tool-wielding, LLM-driven autonomous pentester (taxonomy, tool
+> selector, deepened skills KB, and the smart recon→report pipeline). Every item —
+> old and new — preserves the hard epistemic contract (§1) that makes Sentinel
+> defensible. Build against this file; update it as work lands.
 
 **Status legend:** ✅ done & committed · 🔨 planned (spec below) · 🧭 frontier (labeled, not manufactured)
 
@@ -586,6 +588,240 @@ That trust, at that coverage, is the million-dollar idea.
 
 ---
 
-*End of roadmap. Build against this file; flip §0 rows to ✅ as classes land, and
-keep the invariant contract (§1) inviolate — a manufactured verdict is worse than
-a missing class.*
+# Part II — From 12 classes to an autonomous pentester
+
+> The 12 classes above are the proof-carrying **core**. Part II is the mandate that
+> supersedes the original framing: Sentinel is not a class checklist, it is a
+> **dynamic, tool-wielding, LLM-driven autonomous web pentester** — point it at a
+> URL; it reconnoiters, adapts to the target's shape, hypothesizes, selects tools,
+> executes, analyses failures and retries, then emits a proof-carrying report with a
+> gated auto-patch. The AI-Kavach CTF is a **side quest, not the aim** — de-scoped
+> from planning. Everything in Part II inherits Part I's invariant contract (§1):
+> **tools and the LLM PROPOSE; a pure judge DISPOSES.** A tool hit is a LEAD until a
+> differential judge reproduces it. Adding capability we cannot prove is the
+> analogue of manufacturing a verdict — forbidden. "Doing a class wrong is worse
+> than not doing it" governs every graduation below.
+
+## 10. The vulnerability taxonomy (the 200-item list, folded honestly)
+
+The submitted 200-item list is real but redundant and cloud-heavy: dozens are
+variants of one class (XSS ×12, SQLi ×6, CSRF ×3, XXE/DoS/TOCTOU/XSSI twice), and
+~65 of the tail (123, 132, 135–198) are AWS/K8s/serverless **config-audit** items,
+not black-box web probing. Folded into families, keyed to the one rule that
+matters — **a family graduates to a shipped class only when it has a pure
+differential judge with an explicit anchor** — it collapses to four tiers.
+
+### Tier A — SHIPPED (proof-carrying today; 12 classes + chaining)
+
+These list items are already covered by a pure differential judge or posture baseline:
+
+| Family | List items folded in | Sentinel class |
+|--------|----------------------|----------------|
+| XSS (reflected/stored/DOM/variants) | 1, 22–27, 61–63, 86–90, 116–117, 150, 155–156 | `xss` |
+| SQL injection (all sub-types) | 3, 91–96 | `sql_injection` |
+| SSRF (+ token-leak/metadata variants) | 6, 129, 160, 165, 171, 183, 194 | `ssrf` |
+| Template injection | 148 | `ssti` |
+| Path traversal / LFI / RFI | 4, 5, 19, 52, 107 | `path_traversal` |
+| Open redirect | 12, 60, 73, 106 | `open_redirect` |
+| CORS misconfiguration | 15, 115, 164 | `cors` |
+| Broken auth / JWT | 9, 10, 38, 142, 199, 130, 131, 161 | `broken_auth` (lead+forge) |
+| Access control / IDOR / privesc | 7, 11, 59 | `privesc` / authz |
+| Security-header posture | 21, 45, 55, 143 | `security_misconfiguration` |
+| Insecure cookies / session flags | 53, 103 | `insecure_cookie` |
+| Chained attack paths | 97 | `chain` capstone |
+
+### Tier B — NEXT (a real differential/posture judge exists or is cheap; the working roadmap)
+
+Each becomes a mirror-template class (§2) with its own anchor. Ordered by cost-to-prove:
+
+| Family | List items | Anchor / proof sketch |
+|--------|-----------|-----------------------|
+| Command injection | 17, 109 | OOB collaborator callback (reuse SSRF infra) or time-delay differential |
+| XXE | 18, 118 | OOB entity fetch to collaborator; control = inert doc |
+| NoSQL injection | 82 | boolean operator differential (`[$ne]`) vs benign anchor |
+| CRLF / header / host-header injection | 28, 79 | injected response header/`Location` appears vs stripped control |
+| HTML injection | 27 | reflected markup unescaped, no script (XSS judge, lower sev) |
+| Insecure deserialization | 40 | OOB/time gadget canary; control = benign blob |
+| File upload → shell | 13, 65, 66, 108, 110 | uploaded canary retrievable + executed (OOB), control rejected |
+| Secrets / key leakage | 41, 43, 49, 102 | regex-invariant + entropy on responses/JS (trufflehog/gitleaks assist) |
+| Disclosure (dir listing, backup, source, debug, DB) | 20, 42, 69–72 | invariant-signature differential vs 404 anchor |
+| Clickjacking | 21 | missing `X-Frame-Options`/`frame-ancestors` posture |
+| Cache poisoning / deception | 37, 127, 153 | unkeyed-input reflection persists across a second clean request |
+| Request smuggling / desync | 46, 126, 163 | dual-response differential (bounded, non-destructive) |
+| CSRF (state-changing, no token) | 2, 84, 85 | cross-origin state change succeeds vs token-present control |
+| Prototype pollution | 124 | polluted `__proto__` observably changes a later response |
+
+### Tier C — FRONTIER (honest LEADs only; need a session, an oracle, or time/state)
+
+Surfaced as clearly-labelled leads in `discover`/`autonomous` mode; **never**
+auto-confirmed, because the ground truth is external (intent, timing, or a second
+identity) and cannot be proven by a single self-grounding differential:
+
+- Business-logic / payment / access-control-logic flaws — 30, 57, 58, 59 (logic part)
+- Race conditions / TOCTOU — 16, 99, 122 (needs concurrency oracle; bounded)
+- Rate-limit / brute-force / account-takeover — 31, 51, 104, 32, 33, 133 (needs identity + is intrusive)
+- 2FA/MFA bypass, OAuth/SAML/PKCE flow bugs — 9, 161, 29, 130, 131, 154, 199 (multi-step session)
+- Subdomain / broken-link / dangling takeover — 34, 36 (needs external DNS/registration state)
+- WebSocket / postMessage / service-worker abuse — 111, 144, 156, 155 (needs browser harness)
+- Padding-oracle / timing / weak-entropy / crypto — 112, 113, 100, 101, 114 (statistical oracle)
+- Cert/TLS/HSTS posture — 75, 76, 143 (TLS layer; posture-adjacent, partial)
+
+### Tier D — OUT OF SCOPE for a black-box web scanner (honestly excluded)
+
+The cloud/AWS/K8s/serverless config-audit tail is **not** web-probing — it needs
+provider credentials and an IaC/API audit engine, a different product. Manufacturing
+black-box "findings" for these would violate the contract. Explicitly OUT (audit,
+don't fake): 123, 132, 134–141, 145–147, 149, 151–152, 157–159, 162, 166–198.
+Pure denial-of-service (35, 119) is **permanently OUT** — destructive, contract-forbidden.
+The web-reachable slivers of the cloud tail (SSRF-to-metadata) are already covered
+by `ssrf` in Tier A; that is the honest intersection.
+
+> **Taxonomy rule of thumb:** breadth is earned per differential, not declared per
+> list entry. Tier A is real today; Tier B is the build queue; Tier C is the lead
+> surface; Tier D is a different tool. This ordering is the antidote to "very basic".
+
+## 11. The tool-selection module (`app/tools/selector.py`) — tools PROPOSE
+
+Sentinel already has a real, approval-gated tool layer (`app/tools/runner.py` +
+`resolver.py` + `parsers.py`, tested in `tests/test_tool_execution.py`). The
+"tool list" ask is satisfied by a **selector built on top of it**, not by ingesting
+the submitted PDF encyclopedia — which is ~90% fiction ("Tachyonic Payloads",
+"Parallel-Universe Exploitation", "Gödel's Incompleteness Payloads") and whose
+realistic sliver is offensive AD/C2/physical-red-team gear out of scope for a web
+scanner. Dumping fictional tools into a selector manufactures capability — the
+analogue of manufacturing a verdict. So the registry is a **curated, real** set.
+
+**`ToolSpec` registry (curated, real, drivable).** Each entry: `name`, `role`
+(recon | discovery | fingerprint | proof-assist | manual-only), `phase`,
+`techniques` (which hypothesis classes it feeds), `install` (→ `resolver.INSTALL_RECIPES`),
+`parser` (→ `parsers.*`), and `proposes_only: True` (a hard field — no tool is ever
+a verdict source). Seed set, all already-known OSS:
+
+- **Recon / surface:** `subfinder`, `dnsx`, `httpx`, `katana`, `gau`, `waybackurls`
+  (+ `amass` as an optional heavyweight). Feed the crawl/alive surface.
+- **Parameter & content discovery:** `arjun` (hidden params → new endpoints/params),
+  `ffuf` (content/dir brute → new endpoints). Expand the injectable surface.
+- **Fingerprint:** `wafw00f` (WAF → informs retry/evasion strategy), `nuclei`
+  (template hits → **LEADS only**, re-proved by our judges).
+- **Technique proof-assist (DEMOTED to proposers):** `sqlmap` → seeds `sql_injection`
+  candidate params; `dalfox` → seeds `xss` candidates. Their "findings" are NEVER
+  trusted — they only nominate params/URLs our pure judge then confirms or DISPROVES.
+- **Secrets:** `trufflehog`, `gitleaks` → regex+entropy leads for the disclosure family.
+- **Manual-only (documented, never auto-run):** Burp Suite / Turbo Intruder — the
+  realistic picks from the PDF, surfaced as operator guidance in the report, not driven.
+
+**Selector API (pure, deterministic, offline-testable):**
+`select_tools(surface, hypotheses) -> ToolPlan` ranks specs by (technique match,
+phase, surface fit); `ToolPlan.recon()/discovery()/assist()` group them. It returns
+a PLAN of DATA — it never runs anything. Execution stays behind
+`runner.run_tool(..., approve=...)` with the `_deny` default (no silent install).
+Tool output flows through `parsers.*` back into the `Surface`/hypothesis set, so a
+tool **widens what we test**; the differential judge still decides. Wire into the
+orchestrator's new SELECT-TOOLS + PLAN-EXECUTION stages (§13). Tests mirror
+`test_tool_execution.py` seams (`_resolve`/`_runner`), fully network-free.
+
+## 12. Deepening the skills KB (`app/knowledge/skill_index.py`) — "make Sentinel smarter"
+
+The 817-skill Anthropic Cybersecurity KB (Apache-2.0) is already a derived,
+metadata-only, license-safe index feeding qwen breadth hints. "Transform the skills
+to make Sentinel smarter" = deepen it past shallow name/description ranking, keeping
+the firewall absolute (**skills never become findings; only metadata ships; never
+skill bodies; proposal/breadth-only**):
+
+1. **Technique-aware selection.** Today cards rank by *surface* terms. Add a
+   `technique` axis: map each `SkillCard` to the hypothesis techniques it informs
+   (from tags/subdomain/mitre) so the proposer can pull *"what do the experts try
+   for `ssti`?"* per hypothesis, not just per target. `select_for_technique(tech)`
+   beside `select_for_surface`.
+2. **Derived hint bundles (metadata-only).** From each card's existing metadata,
+   distil three bounded, license-safe hint lists per technique: *payload-shape*
+   cues (e.g. "polyglot", "double-encoding" as words already in tags/descriptions),
+   *tool* references (skill mentions `ffuf`/`sqlmap` → cross-link to §11 registry),
+   and *remediation* cues (feeds the report §13). No skill prose is copied — only
+   term-level signals derived from the metadata we already ship.
+3. **Three consumers, one firewall.** The bundle feeds (a) the **proposer** (richer
+   breadth prompt), (b) the **tool selector** (skill→tool cross-links), (c) the
+   **report** (remediation phrasing). None of these can emit a finding — they only
+   shape PROPOSALS and PROSE. The pure judge is untouched.
+
+Ship as an additive layer (a companion `skill_hints.py` + new methods on
+`SkillIndex`), rebuilding `skill_index.json` with the extra derived fields; all
+existing KB tests stay green. Attribution/license fields in the JSON are preserved.
+
+## 13. The smart agentic pipeline (the flow you asked for)
+
+Your requested loop — *recon → endpoint selection → test planning → tool selection
+→ execution planning → execute → analyse → **failure-cause analysis + retry** →
+solution analysis → **report (repro + proofs + remediation)**, "and it should be
+smart"* — maps onto the existing orchestrator as named stages. Every new stage is
+**LLM-advisory + pure-judge-gated + behind the human deploy gate**:
+
+| # | Stage | Status | What it adds |
+|---|-------|--------|--------------|
+| 1 | DISCOVER (recon) | ✅ exists | live recon → `Surface` |
+| 2 | SELECT ENDPOINTS | 🔨 new | rank/prune surface by injectability (params, reflection, auth) to focus budget |
+| 3 | PLAN TESTS (hypothesize) | ✅ exists | rule floor + LLM breadth |
+| 4 | SELECT TOOLS | 🔨 new (§11) | technique→tool plan (proposers only) |
+| 5 | PLAN EXECUTION | 🔨 new | order, concurrency, budget; which judges + which approved tools |
+| 6 | EXECUTE | ✅ exists | `run_plan` + approval-gated tool runs |
+| 7 | ANALYSE RESULT | ✅ exists | tiered verdicts (CONFIRMED/DISPROVED/LEAD/INCONCLUSIVE) |
+| 8 | FAILURE-CAUSE + RETRY | 🔨 new | on INCONCLUSIVE/suspicious-DISPROVED, an advisory strategist proposes a *different* probe shape (encoding, location, anchor, tool-assist); bounded retries; **re-judged by the SAME pure judge** — never a verdict flip by the strategist |
+| 9 | SOLUTION ANALYSIS | ✅ exists | remediation synthesis + FIX_PROVEN flip |
+| 10 | REPORT | 🔨 new (`report.py`) | per-finding: steps-to-reproduce (real probe requests), proofs (differential+anchor+judge reason+evidence), remediation (patch + proven flip), severity; markdown/JSON |
+
+**The two honesty-critical new stages:**
+
+- **Failure-cause analysis + retry (stage 8).** This is where "smart" lives without
+  breaking the contract. When a judge returns INCONCLUSIVE (or DISPROVED with a
+  reflection/anchor signal that suggests the *probe shape* was wrong, not the
+  hypothesis), a bounded **retry strategist** (LLM-advisory, ≤N attempts) proposes a
+  materially different probe: a new encoding, a different `location` (query→body→
+  path→cookie/header), a repaired anchor, a WAF-evasion mutation, or a tool-assisted
+  candidate. Each retry is a fresh PROPOSAL fed back through the **same pure judge**.
+  The strategist can never set a status — it only earns the judge another honest
+  measurement. Retries are logged as attempts in the report (transparency), and the
+  loop is bounded to stay non-destructive.
+- **Report generator (stage 10, `app/autonomous/report.py`).** For every CONFIRMED
+  finding it assembles a proof-carrying record straight from `JudgeEvidence`:
+  *steps-to-reproduce* = the literal probe requests the judge ran; *proof* = the
+  differential (baseline vs breakout), the anchor, the judge's verbatim reason, and
+  the recorded evidence ids; *remediation* = the synthesized patch + the
+  VALIDATED→DISPROVED flip that proved it; *severity* from the class. The LLM may
+  **narrate** (readable prose, exec summary) but never **assert** — every claim is
+  backed by a graph fact or it is omitted. Renders markdown (human) + JSON
+  (machine). Leads and retried-but-unproven items are shown honestly, unpromoted.
+
+## 14. Blockers, backlog & operating notes
+
+**LLM providers / the API key (answered).** The pluggable provider layer already
+ships (`SENTINEL_LLM_PROVIDER=ollama|anthropic|openai|compatible`; keys via
+env/`getpass`, closure-bound, never logged). Using a strong Claude model is **safe
+and high-value here specifically because of the contract**: Opus supercharges the
+*creative* half (PROPOSE / retry-strategise / analyse / report-narrate) while the
+pure judge still DISPOSES — so a smarter model buys better hypotheses and prose with
+**zero new false-positive risk**. Config for the credited key: set
+`SENTINEL_LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` in the environment (not in
+code, not in git), `SENTINEL_LLM_MODEL=claude-opus-4-8` (or `claude-opus-5`). Keep
+`ollama`/qwen as the free local default for bulk/CI; flip to Opus for showcase runs.
+
+**Location vocab gap (backlog).** `_LOC_MAP` covers query/body_form/body_json/path;
+**cookie** and **header** still degrade to query. Close `location="cookie"` end-to-end
+(judge + enforcer + proposer), then re-run the PortSwigger TrackingId blind-SQLi lab
+(cookie ground truth); then `location="header"`.
+
+**Other backlog:** UNION/data-extraction SQLi (feeds chaining artifacts); WAF/filter
+evasion ladder (pairs with stage 8 + `wafw00f`); a Learning KB (episode store /
+priors / exemplars, proposal-only); dedup duplicate CONFIRMED/verdict rows in the
+report.
+
+**Build order for Part II:** §11 tool selector (isolated, testable now) → §13 report
+generator (turns existing evidence into the deliverable) → §13 endpoint-select +
+retry stages → §12 KB deepening → Tier-B classes in the §7 phase style. Commit at
+each boundary on `sentinel-2` (no push). Every item obeys §1.
+
+---
+
+*End of roadmap (Part I: 12 classes + chaining; Part II: the autonomous pentester).
+Build against this file; flip status rows to ✅ as items land, and keep the
+invariant contract (§1) inviolate — a manufactured verdict, or a capability we
+cannot prove, is worse than a missing class.*
