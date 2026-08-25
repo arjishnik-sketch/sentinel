@@ -38,8 +38,19 @@ from ..models import Experiment, Hypothesis, HttpRequestSpec, SecurityFinding
 from ..remediation.enforcer import RemediationEnforcer, RequestGuardRule
 from ..remediation.model import RemediationVerification
 from .executor import InjectionProbeExecutor
-from .injection_policy import boolean_payload_pairs, quote_parity_payloads
+from .injection_policy import (
+    boolean_payload_pairs,
+    quote_parity_payloads,
+    time_delay_payloads,
+)
 from .judge import InjectionExpectation, injection_expectation, judge_injection
+
+# Time-based blind re-probes: the delay arm's request timeout is bumped well
+# above the injected sleep so a real backend delay completes and is measured in
+# the BEFORE phase, while under the shield the same payload is blocked (403) and
+# returns fast — the excess collapses and the time arm goes silent, part of the
+# VALIDATED -> DISPROVED flip.
+_TIME_PROBE_TIMEOUT = 20.0
 
 @dataclass(frozen=True)
 class InjectionControlRule:
@@ -302,6 +313,7 @@ def _probe(
     tag: str,
     endpoint_url: str,
     value: str,
+    timeout: float = 10.0,
 ) -> tuple[str, int | None]:
     """Build → execute → complete one re-probe on the scratch graph."""
     identity = hypothesis.identity
@@ -319,6 +331,7 @@ def _probe(
             url=url,
             headers=headers,
             body=body,
+            timeout=timeout,
             principal_id=identity.principal_id,
             resource_id=identity.resource_id,
             action=identity.action,
@@ -397,12 +410,32 @@ def _differential(
             value=even_value,
         )
         parity_ids.append((odd_id, even_id))
+    # Time-based BLIND arm, re-run identically in both phases. Pre-fix a delay
+    # payload makes the backend sleep (delay arm slow vs its zero-delay control);
+    # under the shield the same payload is blocked (403) and returns fast, so the
+    # excess collapses and the time arm goes silent — the differential is gone.
+    time_ids: list[tuple[str, str]] = []
+    for index, (delay_value, control_value) in enumerate(
+        time_delay_payloads(expectation.baseline_value)
+    ):
+        delay_id, _ = _probe(
+            scratch, executor, hypothesis, expectation,
+            tag=f"{phase}-timedelay-{index}", endpoint_url=endpoint_url,
+            value=delay_value, timeout=_TIME_PROBE_TIMEOUT,
+        )
+        control_id, _ = _probe(
+            scratch, executor, hypothesis, expectation,
+            tag=f"{phase}-timecontrol-{index}", endpoint_url=endpoint_url,
+            value=control_value, timeout=_TIME_PROBE_TIMEOUT,
+        )
+        time_ids.append((delay_id, control_id))
     judgment = judge_injection(
         scratch,
         hypothesis=hypothesis,
         baseline_experiment_id=baseline_id,
         pair_experiment_ids=tuple(pair_ids),
         parity_experiment_ids=tuple(parity_ids),
+        time_experiment_ids=tuple(time_ids),
     )
     return judgment, baseline_code
 

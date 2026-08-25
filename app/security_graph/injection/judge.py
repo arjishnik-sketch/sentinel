@@ -140,6 +140,30 @@ def _fingerprint(graph: SecurityGraph, experiment_id: str | None):
     return (status, length), evidence.id
 
 
+def _latency(graph: SecurityGraph, experiment_id: str | None):
+    """Round-trip latency in ms for a probe, or None if unreadable."""
+    if experiment_id is None:
+        return None
+    evidence = _probe_evidence(graph, graph.experiments.get(experiment_id))
+    if evidence is None:
+        return None
+    try:
+        elapsed = float(evidence.data.get("elapsed_ms"))
+    except (TypeError, ValueError):
+        return None
+    return elapsed, evidence.id
+
+
+# Time-based blind soundness bar. A delay arm counts as backend-injected sleep
+# only when it runs BOTH at least this many ms slower than its own zero-delay
+# control AND at least this many times slower — two conditions no ordinary
+# network/render jitter clears, while a real N-second injected sleep towers over
+# both. The ratio guard also neutralises a uniformly slow backend (control slow
+# too → the excess collapses → no verdict).
+_TIME_MIN_EXCESS_MS = 2500.0
+_TIME_MIN_RATIO = 3.0
+
+
 def judge_injection(
     graph: SecurityGraph,
     *,
@@ -147,6 +171,7 @@ def judge_injection(
     baseline_experiment_id: str,
     pair_experiment_ids: tuple[tuple[str, str], ...],
     parity_experiment_ids: tuple[tuple[str, str], ...] = (),
+    time_experiment_ids: tuple[tuple[str, str], ...] = (),
 ) -> ValidationJudgment:
     """Decide whether the differential proves a SQL injection.
 
@@ -161,8 +186,19 @@ def judge_injection(
     anchor) and the even probe appended a balanced pair (restores it → back on
     the anchor). It is consulted only when no boolean pair toggled, so a
     parameter interpolated into a string literal (the common real-world case a
-    single-point boolean payload misses) is still provable. Backward-compatible:
-    callers that pass no parity ids keep the original boolean-only behaviour.
+    single-point boolean payload misses) is still provable.
+
+    ``time_experiment_ids`` is a tuple of ``(delay_experiment_id,
+    control_experiment_id)`` pairs for the time-based BLIND arm: the delay probe
+    asked the backend to sleep N seconds, the control probe is the identical
+    shape asking it to sleep 0 seconds. It is consulted LAST — only when neither
+    a boolean pair nor a quote-parity pair fired — because it is the sole channel
+    for a fully-blind injection that neither toggles a visible boolean nor
+    surfaces an error. A reflected value cannot add server-side seconds, so a
+    delay arm running measurably slower than its own control (by the
+    :data:`_TIME_MIN_EXCESS_MS` / :data:`_TIME_MIN_RATIO` bar) can only mean the
+    backend executed the injected sleep. Backward-compatible: callers that pass
+    no parity/time ids keep the original boolean-only behaviour.
     """
 
     identity = hypothesis.identity
@@ -303,12 +339,59 @@ def judge_injection(
                 evidence_ids=tuple(dict.fromkeys(evidence_ids)),
             )
 
-    if not any_pair_readable and not any_parity_readable:
+    # ---- time-based BLIND differential --------------------------------------
+    # Neither a boolean nor a quote-parity signal fired, but a fully-blind
+    # parameter can still be provably injectable through the clock: the delay arm
+    # asks the backend to sleep N seconds and the control arm — byte-for-byte the
+    # same shape — asks it to sleep 0. A reflected value cannot add server-side
+    # seconds, and a backend that never executes the injected SQL runs both arms
+    # equally fast, so the ONLY way the delay arm runs materially slower than its
+    # own control is the backend actually executing the injected sleep. The bar is
+    # double-locked: an absolute excess (_TIME_MIN_EXCESS_MS) AND a ratio
+    # (_TIME_MIN_RATIO). Ordinary network/render jitter clears neither, and a
+    # uniformly slow backend slows the control too — the excess collapses and the
+    # ratio falls, so no verdict. This is the sole channel for a blind injection
+    # that shows no visible boolean and surfaces no error.
+    any_time_readable = False
+    for delay_id, control_id in time_experiment_ids:
+        delay = _latency(graph, delay_id)
+        control = _latency(graph, control_id)
+        if delay is None or control is None:
+            continue
+        any_time_readable = True
+        delay_ms, delay_ev = delay
+        control_ms, control_ev = control
+        excess = delay_ms - control_ms
+        if excess >= _TIME_MIN_EXCESS_MS and delay_ms >= control_ms * _TIME_MIN_RATIO:
+            evidence_ids.extend([delay_ev, control_ev])
+            reason = (
+                f"a time-delay payload on '{expectation.param}' "
+                f"({expectation.method} {expectation.path}) made the backend "
+                f"sleep: the delay arm returned in {delay_ms:.0f}ms vs its "
+                f"length-matched zero-delay control's {control_ms:.0f}ms "
+                f"(excess {excess:.0f}ms ≥ {_TIME_MIN_EXCESS_MS:.0f}ms and "
+                f"≥ {_TIME_MIN_RATIO:g}× slower) — a reflected value cannot add "
+                "server-side seconds and a uniformly slow backend would slow the "
+                "control equally, so the backend executed the injected sleep: a "
+                "real (blind) SQL injection"
+            )
+            return ValidationJudgment(
+                hypothesis_id=hypothesis.id,
+                experiment_id=delay_id,
+                status="VALIDATED",
+                reason=reason,
+                contradiction_kind="injection",
+                expected=False,     # boundary: the param MUST NOT reach the query
+                observed=True,      # it did
+                evidence_ids=tuple(dict.fromkeys(evidence_ids)),
+            )
+
+    if not any_pair_readable and not any_parity_readable and not any_time_readable:
         return ValidationJudgment(
             hypothesis_id=hypothesis.id,
             experiment_id=baseline_experiment_id,
             status="INCONCLUSIVE",
-            reason="no readable TRUE/FALSE or quote-parity probe pair for this hypothesis",
+            reason="no readable TRUE/FALSE, quote-parity, or time-delay probe pair for this hypothesis",
             contradiction_kind="injection",
         )
 
@@ -318,10 +401,12 @@ def judge_injection(
         status="DISPROVED",
         reason=(
             f"no boolean payload toggled the response of '{expectation.param}' "
-            f"({expectation.method} {expectation.path}) and no quote-parity break/"
-            "restore appeared — every length-matched pair returned identical TRUE "
-            "and FALSE responses and appended quotes did not move the response off "
-            "and back onto the baseline, so the parameter does not reach the SQL "
+            f"({expectation.method} {expectation.path}), no quote-parity break/"
+            "restore appeared, and no time-delay payload ran measurably slower "
+            "than its zero-delay control — every length-matched pair returned "
+            "identical TRUE and FALSE responses, appended quotes did not move the "
+            "response off and back onto the baseline, and the delay arms stayed "
+            "as fast as their controls, so the parameter does not reach the SQL "
             "query; no injection"
         ),
         contradiction_kind="injection",

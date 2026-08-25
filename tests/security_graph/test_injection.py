@@ -27,6 +27,7 @@ and proves the request-guard blocks the boolean payloads (403 -> TRUE and FALSE
 collapse) while still forwarding the benign baseline (200) — the honest fix.
 """
 
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, parse_qsl, urlsplit
@@ -45,6 +46,7 @@ from app.security_graph.injection import (
     render_injection_artifacts,
     run_injection_investigation,
     synthesize_injection_remediation,
+    time_delay_payloads,
 )
 from app.security_graph.remediation.enforcer import (
     RemediationEnforcer,
@@ -170,6 +172,79 @@ def _quote_rejecting_filter_body(value: str) -> tuple[int, int]:
     return 200, _BASE_BODY
 
 
+# --- time-based BLIND models ------------------------------------------------
+# A fully-blind injection shows NO visible boolean and surfaces NO error: the
+# status/length fingerprint never varies with the payload, so only the CLOCK
+# reveals it. These models pair a status/length responder that is constant for
+# every value (boolean and quote-parity arms both collapse) with a latency model
+# the judge's time arm reads from ``elapsed_ms``.
+
+_BLIND_BODY = 256          # constant response — nothing about it tracks the payload
+_BASE_LATENCY_MS = 80.0    # ordinary round-trip with no injected sleep
+
+
+def _blind_time_injectable(value: str) -> tuple[int, int]:
+    """A fully-blind injectable backend: the status/length NEVER vary with the
+
+    payload (no visible boolean toggle, no error on an unbalanced quote), so the
+    boolean and quote-parity arms both collapse — only the time-based arm, reading
+    latency, can prove it. Pair with :func:`_time_latency`.
+    """
+    return 200, _BLIND_BODY
+
+
+def _requested_sleep_seconds(value: str) -> int:
+    """Recover the seconds a time-delay payload asks the backend to sleep (0 if
+
+    none). Covers the SLEEP()/PG_SLEEP() and WAITFOR DELAY '0:0:N' shapes the
+    payload ladder emits — the faithful thing a real vulnerable backend does when
+    it executes the injected sleep.
+    """
+    match = re.search(r"(?:pg_)?sleep\s*\(\s*(\d+)", value, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"waitfor\s+delay\s+'0:0:(\d+)'", value, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def _time_latency(value: str) -> float:
+    """Model a backend that EXECUTES the injected sleep: latency grows by the
+
+    requested seconds. The delay arm (SLEEP(5)) returns ~5s slower than its own
+    zero-delay control (SLEEP(0)); a reflected value adds no seconds. This is the
+    only signal the time arm needs.
+    """
+    return _BASE_LATENCY_MS + _requested_sleep_seconds(value) * 1000.0
+
+
+def _uniformly_slow_latency(value: str) -> float:
+    """A congested/overloaded backend: EVERY request is slow, delay and control
+
+    alike. The delay-minus-control excess collapses and the ratio falls to ~1, so
+    the time arm must NOT fire — a uniformly slow backend is not an injection.
+    """
+    return 6000.0
+
+
+def _jitter_latency(value: str) -> float:
+    """Ordinary network jitter: the delay arm is a little slower but far below
+
+    BOTH the absolute-excess and the ratio bar. The time arm must NOT fire.
+    """
+    return 300.0 if _requested_sleep_seconds(value) else 120.0
+
+
+def _guarded_latency(value: str) -> float:
+    """Behind the request-guard the sleep payload is refused (403) BEFORE it
+
+    reaches the backend, so no server-side sleep ever runs — latency stays low for
+    every value. This is what collapses the time differential under the shield.
+    """
+    return _BASE_LATENCY_MS
+
+
 class _CannedInjectionExecutor(ExperimentExecutor):
     """A network-free injection executor: extract the injected value and return
 
@@ -180,10 +255,11 @@ class _CannedInjectionExecutor(ExperimentExecutor):
 
     kind = "injection_check"
 
-    def __init__(self, responder, *, param="q", location="query"):
+    def __init__(self, responder, *, param="q", location="query", latency=None):
         self._responder = responder
         self._param = param
         self._location = location
+        self._latency = latency
 
     def _injected_value(self, experiment) -> str:
         req = experiment.request
@@ -207,15 +283,21 @@ class _CannedInjectionExecutor(ExperimentExecutor):
     def execute(self, experiment):
         value = self._injected_value(experiment)
         status, length = self._responder(value)
+        data = {
+            "mode": "http",
+            "status_code": status,
+            "response_body_length": length,
+            "url": experiment.request.url if experiment.request else "",
+        }
+        # Only the time-based arm reads this; when no latency model is supplied
+        # the key is absent and that arm stays silent (the boolean/parity tests
+        # are unaffected), exactly mirroring evidence with no timing signal.
+        if self._latency is not None:
+            data["elapsed_ms"] = float(self._latency(value))
         evidence = Evidence(
             id=f"ev:injection:{experiment.id}",
             source="http_response",
-            data={
-                "mode": "http",
-                "status_code": status,
-                "response_body_length": length,
-                "url": experiment.request.url if experiment.request else "",
-            },
+            data=data,
             confidence=1.0,
         )
         return ExecutionResult(
@@ -233,14 +315,16 @@ def _matrix(check=None):
     )
 
 
-def _resolved_graph(responder, *, check=None, param="q", location="query"):
+def _resolved_graph(responder, *, check=None, param="q", location="query", latency=None):
     """Seed one injectable surface and drive it to a verdict with a canned model."""
     graph = SecurityGraph()
     results = run_injection_investigation(
         graph,
         _matrix(check),
         target_base=TARGET_BASE,
-        executor=_CannedInjectionExecutor(responder, param=param, location=location),
+        executor=_CannedInjectionExecutor(
+            responder, param=param, location=location, latency=latency
+        ),
     )
     return graph, results
 
@@ -413,12 +497,97 @@ def test_remediate_error_based_injection_fix_proven():
     assert outcome.verification.after_status == "DISPROVED"
 
 
+# --- time-based BLIND differential: the injection that shows no visible boolean
+#     and surfaces no error — only the clock reveals it ------------------------
+
+def test_time_based_blind_is_validated_and_confirmed():
+    # No boolean toggles the (constant) response and an unbalanced quote raises no
+    # error, so the boolean and quote-parity arms collapse — but the delay arm
+    # runs ~5s slower than its own zero-delay control, which only the backend
+    # executing the injected sleep can cause. The time arm proves it.
+    graph, results = _resolved_graph(_blind_time_injectable, latency=_time_latency)
+    assert results[0].status == "VALIDATED"
+    assert "sleep" in results[0].reason.lower()
+    assert graph.hypotheses[results[0].hypothesis_id].status == "CONFIRMED"
+    finding = _confirmed_finding(graph)
+    assert finding.kind == "injection" and finding.severity == "HIGH"
+
+
+def test_uniformly_slow_backend_is_not_injection_disproved():
+    # A congested backend is slow for EVERY request, delay and control alike, so
+    # the excess collapses and the ratio falls to ~1. The time arm must not fire:
+    # slowness is not injection. DISPROVED, nothing manufactured.
+    graph, results = _resolved_graph(
+        _blind_time_injectable, latency=_uniformly_slow_latency
+    )
+    assert results[0].status == "DISPROVED"
+    assert not list(graph.findings_for(kind="injection", status="OPEN"))
+
+
+def test_network_jitter_is_not_injection_disproved():
+    # The delay arm is a little slower than its control, but far below BOTH the
+    # absolute-excess and ratio bars — ordinary jitter, not an injected sleep.
+    graph, results = _resolved_graph(_blind_time_injectable, latency=_jitter_latency)
+    assert results[0].status == "DISPROVED"
+    assert not list(graph.findings_for(kind="injection", status="OPEN"))
+
+
+def test_pure_judge_reads_time_differential_directly():
+    # Re-run the PURE judge over the recorded delay/control probes with the
+    # boolean AND parity arms empty; VALIDATED is a deterministic function of the
+    # reproduced latency excess alone.
+    graph, results = _resolved_graph(_blind_time_injectable, latency=_time_latency)
+    hyp = graph.hypotheses[results[0].hypothesis_id]
+    time_ids = tuple(
+        (f"exp:injection-timedelay-{i}:{hyp.id}",
+         f"exp:injection-timecontrol-{i}:{hyp.id}")
+        for i in range(len(time_delay_payloads(BASELINE_VALUE)))
+    )
+    judgment = judge_injection(
+        graph,
+        hypothesis=hyp,
+        baseline_experiment_id=f"exp:injection-baseline:{hyp.id}",
+        pair_experiment_ids=(),               # boolean collapsed
+        parity_experiment_ids=(),             # parity collapsed; force time arm
+        time_experiment_ids=time_ids,
+    )
+    assert judgment.status == "VALIDATED" and judgment.observed is True
+
+
+def test_remediate_time_based_injection_fix_proven():
+    # A time-confirmed blind injection is PROVEN fixed when the request-guard
+    # blocks the sleep payloads (403, before they reach the backend) so no
+    # server-side delay occurs — the delay/control excess collapses — while the
+    # benign baseline is still forwarded.
+    graph, _ = _resolved_graph(_blind_time_injectable, latency=_time_latency)
+    outcome = remediate_injection_and_prove(
+        graph,
+        _confirmed_finding(graph),
+        before_executor=_CannedInjectionExecutor(
+            _blind_time_injectable, latency=_time_latency
+        ),
+        after_executor=_CannedInjectionExecutor(
+            _guarded_body, latency=_guarded_latency
+        ),
+        use_enforcer=False,
+    )
+    assert outcome.result == "FIX_PROVEN"
+    assert outcome.verification.before_status == "VALIDATED"
+    assert outcome.verification.after_status == "DISPROVED"
+
+
 # --- guard purity (the virtual-patch decision) -----------------------------
 
 def test_matches_sqli_signature_catches_payloads_not_benign():
     assert _matches_sqli_signature("apple' OR '1'='1")
     assert _matches_sqli_signature("apple' OR '1'='2")
     assert _matches_sqli_signature("1 UNION SELECT password FROM users")
+    # time-based blind sleep primitives across dialects — the guard must refuse
+    # these so a time-confirmed injection collapses under the shield.
+    assert _matches_sqli_signature("apple' AND SLEEP(5)-- -")
+    assert _matches_sqli_signature("apple'||pg_sleep(5)-- -")
+    assert _matches_sqli_signature("apple'; WAITFOR DELAY '0:0:5'-- -")
+    assert _matches_sqli_signature("1 AND 1=(SELECT 1 FROM PG_SLEEP(5))")
     assert not _matches_sqli_signature("apple")
     assert not _matches_sqli_signature("green tea 500ml")
 

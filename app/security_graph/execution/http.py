@@ -1,3 +1,4 @@
+from time import perf_counter
 from uuid import uuid4
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -167,6 +168,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             method=method,
         )
 
+        started = perf_counter()
         try:
             with self._urlopen(
                 request,
@@ -188,6 +190,15 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
                 f"HTTP request failed: {exc.reason}"
             ) from exc
 
+        # Wall-clock round-trip latency in milliseconds. A pure FACT, never a
+        # verdict: like status/length it is only meaningful inside a differential.
+        # The time-based blind arm compares a delay probe's latency against a
+        # length-matched zero-delay control anchored to the benign baseline; a
+        # reflected value cannot add server-side seconds, so a reproduced excess
+        # can only come from the backend executing an injected sleep. Classes that
+        # do not read latency ignore this key entirely.
+        elapsed_ms = (perf_counter() - started) * 1000.0
+
         evidence_data = {
             "executor": self.kind,
             "mode": "http",
@@ -199,6 +210,7 @@ class HttpAuthorizationExecutor(ExperimentExecutor):
             "set_cookie": set_cookies,
             "response_body_length": len(response_body),
             "response_body_text": _capture_body_text(response_body),
+            "elapsed_ms": elapsed_ms,
             "expected_statuses": request_spec.expected_statuses,
             "expected_outcome": request_spec.expected_outcome,
         }

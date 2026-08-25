@@ -53,6 +53,7 @@ from .injection_policy import (
     load_injection_policy,
     parse_injection_policy,
     quote_parity_payloads,
+    time_delay_payloads,
 )
 from .judge import (
     InjectionExpectation,
@@ -85,6 +86,7 @@ __all__ = [
     "load_injection_policy",
     "parse_injection_policy",
     "quote_parity_payloads",
+    "time_delay_payloads",
     "InjectionExpectation",
     "injection_expectation",
     "judge_injection",

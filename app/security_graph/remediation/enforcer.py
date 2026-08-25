@@ -285,6 +285,17 @@ _SQLI_SIGNATURES = (
     # to carry a bare quote, so blocking it collapses the odd-breaks/even-restores
     # differential too (both the odd and even payloads are refused).
     re.compile(r"""['"]"""),
+    # time-based BLIND sleep primitives. A benign parameter never asks the
+    # backend to sleep, so blocking the sleep-function SHAPE refuses the delay
+    # payloads outright (they return fast, 403) — the delay/control excess
+    # collapses and the pure judge's time arm goes silent under the shield. Cover
+    # the common dialects: MySQL SLEEP/BENCHMARK, Postgres PG_SLEEP, SQL Server
+    # WAITFOR DELAY, Oracle's DBMS_PIPE.RECEIVE_MESSAGE / DBMS_LOCK.SLEEP.
+    re.compile(r"""\bsleep\s*\(""", re.IGNORECASE),
+    re.compile(r"""\bpg_sleep\s*\(""", re.IGNORECASE),
+    re.compile(r"""\bbenchmark\s*\(""", re.IGNORECASE),
+    re.compile(r"""\bwaitfor\s+delay\b""", re.IGNORECASE),
+    re.compile(r"""\bdbms_(pipe\.receive_message|lock\.sleep)\s*\(""", re.IGNORECASE),
 )
 
 # Template injection (SSTI) — server-side template expression delimiters.

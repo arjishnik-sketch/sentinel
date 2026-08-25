@@ -28,9 +28,23 @@ from ..analysis import apply_validation_judgment, materialize_confirmed_findings
 from ..graph import SecurityGraph
 from ..models import Experiment, Hypothesis, HttpRequestSpec, ValidationJudgment
 from .executor import InjectionProbeExecutor
-from .injection_policy import InjectionPolicy, boolean_payload_pairs, quote_parity_payloads
+from .injection_policy import (
+    InjectionPolicy,
+    boolean_payload_pairs,
+    quote_parity_payloads,
+    time_delay_payloads,
+)
 from .judge import InjectionExpectation, injection_expectation, judge_injection
 from .seed import seed_injection_policy
+
+
+# Time-based blind probes ask the backend to sleep this many seconds; the delay
+# probe's request timeout is set comfortably above it so a real injected sleep
+# completes and is measured rather than aborted (the default 10s spec timeout
+# would race a 5s sleep + network). The control arm sleeps 0s but shares the
+# timeout so the two requests differ only in the sleep DURATION.
+_TIME_DELAY_SECONDS = 5
+_TIME_PROBE_TIMEOUT = 20.0
 
 
 @dataclass(frozen=True)
@@ -100,6 +114,7 @@ def _run_probe(
     *,
     tag: str,
     value: str,
+    timeout: float = 10.0,
 ) -> tuple[str, int | None]:
     """Build → execute → complete one probe. Returns (experiment_id, status)."""
     identity = hypothesis.identity
@@ -115,6 +130,7 @@ def _run_probe(
             url=url,
             headers=headers,
             body=body,
+            timeout=timeout,
             principal_id=identity.principal_id,
             resource_id=identity.resource_id,
             action=identity.action,
@@ -191,12 +207,35 @@ def _probe_and_judge(
         )
         parity_ids.append((odd_id, even_id))
 
+    # Time-based BLIND probes: a delay arm asking the backend to sleep N seconds
+    # vs a byte-shape-identical control asking it to sleep 0. The judge consults
+    # these LAST — only when neither a boolean pair nor a quote-parity pair fired
+    # — because it is the sole channel for a fully-blind injection that shows no
+    # visible boolean and surfaces no error. The delay probe gets a bumped timeout
+    # so a real injected sleep completes and is timed rather than aborted.
+    time_ids: list[tuple[str, str]] = []
+    for index, (delay_value, control_value) in enumerate(
+        time_delay_payloads(expectation.baseline_value, seconds=_TIME_DELAY_SECONDS)
+    ):
+        delay_id, _ = _run_probe(
+            graph, executor, hypothesis, expectation,
+            tag=f"timedelay-{index}", value=delay_value,
+            timeout=_TIME_PROBE_TIMEOUT,
+        )
+        control_id, _ = _run_probe(
+            graph, executor, hypothesis, expectation,
+            tag=f"timecontrol-{index}", value=control_value,
+            timeout=_TIME_PROBE_TIMEOUT,
+        )
+        time_ids.append((delay_id, control_id))
+
     judgment = judge_injection(
         graph,
         hypothesis=hypothesis,
         baseline_experiment_id=baseline_id,
         pair_experiment_ids=tuple(pair_ids),
         parity_experiment_ids=tuple(parity_ids),
+        time_experiment_ids=tuple(time_ids),
     )
     return judgment, baseline_code
 
