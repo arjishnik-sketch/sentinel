@@ -26,3 +26,13 @@ sentinel = "app.cli:main"
 
 [tool.setuptools]
 packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The offline default: deselect the live tier so plain `pytest` stays fully
+# hermetic (no network, no containers). Run the live wins explicitly with
+# `pytest -m live` once the vulnerable targets are up (see docker-compose.yml).
+addopts = "-m 'not live'"
+markers = [
+    "live: touches a live vulnerable target (OWASP Juice Shop / VAmPI); deselected by default, run with `-m live`",
+]

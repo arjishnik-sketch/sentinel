@@ -820,11 +820,16 @@ evasion ladder (pairs with stage 8 + `wafw00f`); a Learning KB (episode store /
 priors / exemplars, proposal-only); dedup duplicate CONFIRMED/verdict rows in the
 report.
 
-**Build order for Part II:** §11 tool selector ✅ → §13 report generator ✅ *(module
-shipped + tested; CLI-wiring is the immediate next step — see `HANDOVER.md`)* → §13
-failure-cause+retry (stage 8, the highest-value "smart" stage) + endpoint-select
-(stage 2) + exec-plan (stage 5) → §12 KB deepening → Tier-B classes in the §7 phase
-style (command-injection & XXE first, reusing the SSRF OOB collaborator). Commit at
+**Build order for Part II:** §11 tool selector ✅ → §13 report generator ✅ →
+CLI-wire report ✅ → §13 failure-cause+retry (stage 8, adaptive loop) ✅ → §11
+NOMINATE stage ✅ *(sqlmap driven as a real nominator behind the pure judge,
+approval-gated — "tool-wielding" now true)* → **live CI harness ✅** *(gated
+`tests/live/` tier + `docker-compose.yml` + `.github/workflows/live.yml`; the
+Juice Shop / VAmPI SQLi wins are now reproducible `VALIDATED`→`FIX_PROVEN`
+integration tests, deselected by default via `-m 'not live'`)* → endpoint-select
+(stage 2) + exec-plan (stage 5) + wire broken_auth/privesc judges into the
+autonomous `_SPECS` → §12 KB deepening → Tier-B classes in the §7 phase style
+(command-injection & XXE first, reusing the SSRF OOB collaborator). Commit at
 each boundary on `sentinel-2` (no push). Every item obeys §1.
 
 ---

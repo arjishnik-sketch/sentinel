@@ -1,0 +1,30 @@
+# Vulnerable targets for the live-integration tier (`pytest -m live`).
+#
+# Stand these up locally with `docker compose up -d`, wait for both to answer,
+# then run `pytest -m live`. The same compose file backs the CI job in
+# .github/workflows/live.yml. Neither app is exposed beyond localhost; both are
+# INTENTIONALLY vulnerable — never run them on a public interface.
+services:
+  juice-shop:
+    # Pinned tag (not :latest) so the live SQLi wins stay reproducible run to run.
+    image: bkimminich/juice-shop:v20.2.0
+    ports:
+      - "3000:3000"
+    # Juice Shop needs no seeding; it boots ready. Give it room to warm up.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/rest/admin/application-version"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  vampi:
+    # VAmPI in its vulnerable configuration (the auth/path SQLi we anchor on).
+    image: erev0s/vampi:latest
+    environment:
+      vulnerable: "1"
+    # VAmPI listens on 5000 inside the container; we publish it as 5001 to match
+    # SENTINEL_VAMPI_URL's default. Its DB is empty until GET /createdb seeds the
+    # default users (name1/name2) — conftest.py and CI both hit it before probing.
+    ports:
+      - "5001:5000"

@@ -798,7 +798,33 @@ Sentinel today is a **polished, safe, deterministic engine that closes the full 
   — all gated by the *same* pure judges (plus a live headless-browser capture gated
   behind an env var). They run with **no network** — every verdict is reproduced by
   the pure judge against a canned oracle — so the epistemic contract itself is
-  regression-tested: `136 passed, 1 skipped` by default.
+  regression-tested. The full offline suite is `482 passed, 1 skipped` by
+  default (network-free; the live tier below is deselected).
+
+**Live CI harness — the SQLi wins, reproducible on demand:**
+
+- The hand-run injection wins against Juice Shop and VAmPI are promoted to a
+  gated, automated tier under `tests/live/`. Each test proves one win end-to-end
+  with nothing mocked: the pure differential judge re-probes the live target and
+  returns `VALIDATED`, then `remediate_injection_findings` stands a real loopback
+  enforcement shield in front of the target and the *same* judge flips
+  `VALIDATED → DISPROVED` (`FIX_PROVEN`). Three surfaces are covered: Juice Shop
+  product-search `q` (query, quote-parity error-based), VAmPI `/users/v1/{username}`
+  (path-segment), and Juice Shop `/rest/user/login` `email` (JSON body, auth-bypass
+  with a `401` baseline anchor).
+- These are **gated `live`** and **deselected by default** (`addopts = -m 'not
+  live'`) — a plain `pytest` stays fully hermetic. Requesting a live-target
+  fixture auto-marks the test `live`, so a network test can never leak into the
+  offline run. Stand the targets up and run the tier:
+
+  ```bash
+  docker compose up -d           # Juice Shop :3000 + VAmPI :5001 (intentionally vulnerable)
+  pytest -m live                 # an unreachable target SKIPS cleanly, never errors
+  ```
+
+  The same `docker-compose.yml` backs the GitHub Actions job in
+  `.github/workflows/live.yml` (compose up → wait for both → seed VAmPI's DB →
+  `pytest -m live`), so the wins are CI-defensible, not one-off demos.
 
 **Target-agnostic — proven on two independent live targets:**
 
