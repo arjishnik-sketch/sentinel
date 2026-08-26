@@ -767,7 +767,7 @@ smart"* — maps onto the existing orchestrator as named stages. Every new stage
 | 7 | ANALYSE RESULT | ✅ exists | tiered verdicts (CONFIRMED/DISPROVED/LEAD/INCONCLUSIVE) |
 | 8 | FAILURE-CAUSE + RETRY | 🔨 new | on INCONCLUSIVE/suspicious-DISPROVED, an advisory strategist proposes a *different* probe shape (encoding, location, anchor, tool-assist); bounded retries; **re-judged by the SAME pure judge** — never a verdict flip by the strategist |
 | 9 | SOLUTION ANALYSIS | ✅ exists | remediation synthesis + FIX_PROVEN flip |
-| 10 | REPORT | 🔨 new (`report.py`) | per-finding: steps-to-reproduce (real probe requests), proofs (differential+anchor+judge reason+evidence), remediation (patch + proven flip), severity; markdown/JSON |
+| 10 | REPORT | ✅ module shipped · 🔨 CLI-wire pending | per-finding: steps-to-reproduce (real probe requests), proofs (differential+anchor+judge reason+evidence), remediation (patch + proven flip), severity; markdown/JSON |
 
 **The two honesty-critical new stages:**
 
@@ -781,15 +781,21 @@ smart"* — maps onto the existing orchestrator as named stages. Every new stage
   The strategist can never set a status — it only earns the judge another honest
   measurement. Retries are logged as attempts in the report (transparency), and the
   loop is bounded to stay non-destructive.
-- **Report generator (stage 10, `app/autonomous/report.py`).** For every CONFIRMED
+- **Report generator (stage 10, `app/autonomous/report.py`) — ✅ SHIPPED (module),
+  🔨 CLI-wiring pending.** For every CONFIRMED
   finding it assembles a proof-carrying record straight from `JudgeEvidence`:
-  *steps-to-reproduce* = the literal probe requests the judge ran; *proof* = the
+  *steps-to-reproduce* = the literal probe requests the judge ran (sensitive header
+  *values* masked); *proof* = the
   differential (baseline vs breakout), the anchor, the judge's verbatim reason, and
   the recorded evidence ids; *remediation* = the synthesized patch + the
   VALIDATED→DISPROVED flip that proved it; *severity* from the class. The LLM may
   **narrate** (readable prose, exec summary) but never **assert** — every claim is
   backed by a graph fact or it is omitted. Renders markdown (human) + JSON
   (machine). Leads and retried-but-unproven items are shown honestly, unpromoted.
+  `build_report` / `render_markdown` / `render_json` / `write_report` / `narrate` all
+  ship with 13 offline tests (`tests/test_autonomous_report.py`). **Remaining:** call it
+  at the end of `autonomous_cmd.run()` (capture `_remediate_confirmed` outcomes, build +
+  write, print an artifact panel), gate `narrate` behind `use_llm`, add a CLI-level test.
 
 ## 14. Blockers, backlog & operating notes
 
@@ -814,9 +820,11 @@ evasion ladder (pairs with stage 8 + `wafw00f`); a Learning KB (episode store /
 priors / exemplars, proposal-only); dedup duplicate CONFIRMED/verdict rows in the
 report.
 
-**Build order for Part II:** §11 tool selector (isolated, testable now) → §13 report
-generator (turns existing evidence into the deliverable) → §13 endpoint-select +
-retry stages → §12 KB deepening → Tier-B classes in the §7 phase style. Commit at
+**Build order for Part II:** §11 tool selector ✅ → §13 report generator ✅ *(module
+shipped + tested; CLI-wiring is the immediate next step — see `HANDOVER.md`)* → §13
+failure-cause+retry (stage 8, the highest-value "smart" stage) + endpoint-select
+(stage 2) + exec-plan (stage 5) → §12 KB deepening → Tier-B classes in the §7 phase
+style (command-injection & XXE first, reusing the SSRF OOB collaborator). Commit at
 each boundary on `sentinel-2` (no push). Every item obeys §1.
 
 ---

@@ -548,13 +548,88 @@ SLIDES += [
     },
 ]
 SLIDES += [
+    {"kind": "divider", "title": "From 12 Classes to an Autonomous Pentester",
+     "subtitle": "Point it at a URL — it runs the whole loop itself",
+     "notes": "The 12 classes are the proof-carrying core. The next section is what "
+              "they add up to: a dynamic, tool-wielding, LLM-driven agent that recons, "
+              "adapts, proves, patches, and reports — with the same caged-AI contract."},
+    {
+        "title": "The Autonomous Command",
+        "subtitle": "autonomous <url> — the fusion brain",
+        "bullets": [
+            ("cyan", "One command: live recon → hypotheses → proof → gated patch"),
+            ("cyan", "Adapts to the target's shape — no routes or payloads hard-coded"),
+            ("cyan", "Concurrent pure-judge adjudication; a tool hit is only a LEAD"),
+            ("cyan", "Same contract: the loop proposes, the deterministic judge disposes"),
+            ("cyan", "Session-aware stage folds a captured login into the proof-chain"),
+        ],
+        "notes": (
+            "This is the headline of the current state. `autonomous <url>` fuses the whole "
+            "pipeline into one self-directed loop: it reconnoiters live, generates KB-informed "
+            "hypotheses, adjudicates them concurrently with the pure judges, and — on operator "
+            "approval — patches and re-proves. Nothing target-specific is baked in."
+        ),
+    },
+    {
+        "title": "Tools & Models Propose; the Judge Disposes",
+        "subtitle": "A curated real-tool layer + bring-your-own model",
+        "bullets": [
+            ("cyan", "Curated OSS recon/discovery: httpx, katana, ffuf, arjun, gau…"),
+            ("cyan", "sqlmap / dalfox / nuclei DEMOTED to nominators — never a verdict"),
+            ("warn", "Approval-gated execution; no silent installs, scope-guarded"),
+            ("ok", "Pluggable LLM: local qwen by default, Opus for showcase runs"),
+            ("ok", "Keys via env / getpass — in-memory, never logged, never committed"),
+        ],
+        "notes": (
+            "Breadth without compromising trust. A curated registry of real OSS tools widens "
+            "what we test, but every tool 'proposes only' — even sqlmap and nuclei are demoted "
+            "to nominators whose hits are re-proved by our judges. The model layer is pluggable: "
+            "free local qwen for bulk and CI, a hosted Opus for showcase runs, keys never stored."
+        ),
+    },
+    {
+        "title": "The Proof-Carrying Report",
+        "subtitle": "The deliverable: reproduce, prove, remediate",
+        "bullets": [
+            ("ok", "Per finding: the literal probes the judge issued (steps-to-reproduce)"),
+            ("ok", "Proof = the differential + anchor + the judge's own verdict + evidence"),
+            ("ok", "Remediation = the patch and its live VALIDATED→DISPROVED flip"),
+            ("cyan", "Markdown for humans + JSON for machines; leads shown, unpromoted"),
+            ("warn", "The LLM may narrate — but every claim is graph-backed or omitted"),
+        ],
+        "notes": (
+            "The loop ends in a deliverable that carries its own proof. For every confirmed "
+            "finding the report lifts the exact probes the judge ran, the differential and anchor, "
+            "the judge's verbatim verdict and evidence ids, and the remediation's live flip. An "
+            "optional LLM writes the executive summary — advisory only; it asserts no fact."
+        ),
+    },
+    {
+        "title": "Breadth, Earned Per Proof",
+        "subtitle": "A 200-item wishlist, folded into four honest tiers",
+        "bullets": [
+            ("ok", "Tier A — SHIPPED: 12 classes + chaining cover the real web families"),
+            ("cyan", "Tier B — NEXT: cmd-injection, XXE, NoSQLi, CSRF… each needs a judge"),
+            ("next", "Tier C — FRONTIER: labeled leads only (logic, race, ATO, OAuth)"),
+            ("warn", "Tier D — OUT: cloud config-audit & DoS — a different tool, not faked"),
+            ("cyan", "Rule: a family graduates only with a pure differential + anchor"),
+        ],
+        "notes": (
+            "We took a 200-item vulnerability wishlist and folded it honestly into four tiers: "
+            "what ships today, the build queue, the frontier we surface only as labeled leads, "
+            "and what is out of scope for a black-box web tool. Breadth is earned per differential "
+            "judge — never declared per list entry. That discipline is the antidote to 'basic'."
+        ),
+    },
+]
+SLIDES += [
     {
         "title": "Test Results & Validation",
         "subtitle": "Green, deterministic, and honest about the one skip",
-        "stats": [("311", "tests"), ("310", "passing"), ("12", "vuln classes"),
+        "stats": [("454", "tests"), ("453", "passing"), ("12", "vuln classes"),
                   ("2", "live stacks")],
         "bullets": [
-            ("ok", "310 passing, 1 skipped (the opt-in live-browser path)"),
+            ("ok", "453 passing, 1 skipped (the opt-in live-browser path)"),
             ("ok", "Full offline suite is network-free and runs in seconds"),
             ("ok", "Each class: parse → CONFIRM → PATCH → PROVE, plus isolation"),
             ("ok", "Live E2E validated on Juice Shop and VAmPI over real sockets"),
@@ -640,16 +715,18 @@ SLIDES += [
         "title": "Status & Roadmap",
         "subtitle": "Honest today; a clear path to more",
         "bullets": [
-            ("ok", "Today: 12 classes live end-to-end on 2 stacks; 311 tests"),
-            ("ok", "Today: provable 2-link chaining (SQLi ⇒ IDOR), decoy-gated"),
-            ("ok", "Today: Login Tester + authenticated reasoning"),
-            ("next", "Next: multi-link chaining + deeper exploit composition"),
-            ("next", "Next: a policy library for common stacks + a CI/CD gate"),
+            ("ok", "Today: 12 classes + provable chaining, live on 2 stacks; 454 tests"),
+            ("ok", "Today: autonomous <url> fusion loop + curated tool selector"),
+            ("ok", "Today: pluggable LLM providers + proof-carrying report generator"),
+            ("next", "Next: failure-cause analysis + bounded retry — smarter probing"),
+            ("next", "Next: Tier-B classes (cmd-injection, XXE…), deeper KB, CI gate"),
         ],
         "notes": (
-            "We're candid about the line between done and next. Twelve classes, two targets, the "
-            "Login Tester, authenticated reasoning, and a provable 2-link SQLi⇒IDOR chain ship today; "
-            "multi-link chaining, a ready-made policy library, and a CI gate are the roadmap."
+            "We're candid about the line between done and next. Today: twelve classes and a "
+            "provable 2-link chain live on two stacks, the autonomous fusion loop, a curated "
+            "propose-only tool layer, pluggable LLM providers, and a proof-carrying report "
+            "generator. Next: a smart failure-analysis/retry stage, the Tier-B classes, a deeper "
+            "skills KB, and a CI/CD gate."
         ),
     },
 ]

@@ -69,7 +69,7 @@ Discover mode runs header + cookie posture off the built-in secure baseline and 
 - **Python 3.12+** (the code uses `str | None` unions and `datetime.UTC`).
 - **A local Ollama server** with the `qwen3:4b` model pulled (used for the advisory tiebreak).
 - **A live HTTP(S) target** to investigate (e.g. OWASP Juice Shop).
-- **WSL / Linux to run.** On the dev machine, source is edited on the Windows drive (`D:\scanner proj\sentinel`) but the app **runs under WSL/Linux** — the committed `.venv` is Linux-native (POSIX layout, `/usr/bin/python3.12`).
+- **A shell.** The `./sentinel` launcher and the setup steps below assume Linux/WSL. To run on a **Windows host** (native PowerShell/Git Bash or WSL2), see the dedicated **[Running on Windows](#running-on-windows)** section — the app runs on Windows once you install Python 3.12 and enable UTF-8 mode. The repo's local `.venv` is Linux-native (POSIX layout) and gitignored, so Windows users create their own.
 - Optional (legacy `hunt` pipeline only): the ProjectDiscovery Go binaries `subfinder`, `httpx`, `katana` on `PATH`. **Not needed for the primary `investigate` command.**
 - Optional (**Login Tester** only): the `login` extra — `pip install -e ".[login]"` then `python -m playwright install chromium`. **Not needed for `investigate`;** the core install stays cloud-free and dependency-light.
 
@@ -201,6 +201,110 @@ investigate
 Leave the REPL with `exit` (or `quit`, or Ctrl-C).
 
 > **Note:** the second argument is the cycle budget (default `10`, clamped `1..100`); the third is an optional access-policy oracle; a fourth optional arg is a source-repo directory for the root-cause patch.
+
+---
+
+## Running on Windows
+
+The primary instructions above assume a Linux shell (the `./sentinel` launcher is a
+bash script that sources `.venv/bin/activate`). On a Windows host you have two
+supported paths.
+
+### Path A — WSL2 (recommended)
+
+The least-friction way to get the documented Linux behaviour on Windows:
+
+1. Install WSL2 + Ubuntu (`wsl --install` in an elevated PowerShell, then reboot).
+2. Open the Ubuntu shell and follow **Install → Configure → Run it** above verbatim —
+   `./sentinel` works unchanged inside WSL.
+3. Ollama: either run it on Windows bound to all interfaces
+   (`OLLAMA_HOST=0.0.0.0 ollama serve`) and point `OLLAMA_URL` at the WSL host-gateway
+   IP (see the WSL networking note under *Start the services*), or install Ollama
+   **inside** WSL and use `http://127.0.0.1:11434`.
+
+### Path B — native Windows (PowerShell / Git Bash)
+
+**Prerequisites**
+
+- **Python 3.12+ is required.** `pyproject.toml` pins `requires-python = ">=3.12"`, and
+  four modules (`recon_engine.py`, `findings.py`, `engagement.py`, `memory.py`) import
+  `datetime.UTC`, which only exists on Python 3.11+. On an older interpreter the REPL
+  aborts at import with `ImportError: cannot import name 'UTC' from 'datetime'`, and
+  `pip install -e .` refuses outright. Install 3.12 from
+  [python.org](https://www.python.org/downloads/windows/) or `winget install Python.Python.3.12`,
+  then invoke it as `py -3.12`.
+- **Docker Desktop** for the Juice Shop fixture target.
+- A shell: PowerShell or Git Bash (bundled with Git for Windows).
+
+**Set up a Windows-native virtual environment.** The committed dev `.venv` is
+Linux-native (`.venv/bin/…`) and gitignored — create your own; Windows venvs live under
+`.venv\Scripts\` instead of `.venv/bin/`:
+
+```bash
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1     # PowerShell   (Git Bash: source .venv/Scripts/activate)
+pip install -e .
+```
+
+**Enable UTF-8 mode — this is the one Windows-specific gotcha.** Sentinel's Rich UI
+draws box- and block-drawing characters. On the default Windows code page (cp1252) the
+console raises `UnicodeEncodeError: 'charmap' codec can't encode character '▐'` the
+moment it prints a panel. Turn on Python's UTF-8 mode before running:
+
+```bash
+$env:PYTHONUTF8 = "1"      # PowerShell (current session)
+export PYTHONUTF8=1        # Git Bash  (current session)
+```
+
+Make it permanent with `setx PYTHONUTF8 1` (applies to new shells), and prefer
+**Windows Terminal** (`chcp 65001`) over the legacy `conhost` console.
+
+**Run it.** Because `./sentinel` activates a Linux venv, launch the module directly on
+native Windows (this mirrors exactly what the launcher does — `python -m app.cli`):
+
+```bash
+python -m app.cli
+```
+
+…or the installed console script:
+
+```bash
+sentinel
+```
+
+Then use the commands exactly as documented elsewhere in this guide, e.g.:
+
+```bash
+investigate http://127.0.0.1:3000 12
+```
+
+```bash
+autonomous http://127.0.0.1:3000
+```
+
+**Environment variables.** A `.env` file in the repo root works identically on Windows
+(it is read by `python-dotenv`), so the *Configure* table above applies unchanged. To
+drive the autonomous loop with a hosted model instead of local Ollama, set the provider
+in the environment (or let the one-time `getpass` prompt collect the key):
+
+```bash
+$env:SENTINEL_LLM_PROVIDER = "anthropic"
+$env:SENTINEL_LLM_MODEL    = "claude-opus-4-8"
+$env:ANTHROPIC_API_KEY     = "sk-..."   # never commit this
+```
+
+Keys are read from the environment or a `getpass` prompt, held in memory only, and
+never logged or written to disk.
+
+### Windows troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `UnicodeEncodeError: … '▐'` / `charmap codec` | legacy cp1252 console | `set PYTHONUTF8=1`; use Windows Terminal + `chcp 65001` |
+| `ImportError: cannot import name 'UTC' from 'datetime'` | Python < 3.11 | install and use Python 3.12 (`py -3.12`) |
+| `pip install -e .` refuses / version error | `requires-python >=3.12` | install Python 3.12 |
+| `./sentinel`: *No such file* / bad interpreter | launcher is a Linux bash script (`.venv/bin/activate`) | run `python -m app.cli`, or use WSL2 (Path A) |
+| Ollama connection refused | server not running / wrong URL | start `ollama serve`; native Windows → `OLLAMA_URL=http://127.0.0.1:11434` |
 
 ---
 
