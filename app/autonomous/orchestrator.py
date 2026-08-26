@@ -15,7 +15,7 @@ module stops at a tiered report of verdicts + leads.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import hypotheses as HYP
 from . import session as SESSION
@@ -111,6 +111,28 @@ def build_plan(recon, findings, *, skills_index=None, use_llm=True, transport=No
         surface, skill_cards=skills, use_llm=use_llm, transport=transport, max_hyps=max_hyps
     )
     return Plan(surface=surface, hypotheses=_rank(hyps), skills=tuple(skills))
+
+
+def augment_plan(plan, extra_hypotheses):
+    """Fold late-arriving hypotheses (e.g. tool NOMINATIONS) into an existing plan.
+
+    Pure: no I/O. New hypotheses are shape-deduped against what the plan already
+    carries — a nomination that merely restates a probe the plan already issues is
+    dropped — and the survivors are merged and re-ranked (provable-first). Existing
+    hypotheses are never displaced; nominations only ever WIDEN what gets judged.
+    The judge still disposes every one downstream — nothing here confirms."""
+    if not extra_hypotheses:
+        return plan
+    seen = {h.shape for h in plan.hypotheses}
+    merged = list(plan.hypotheses)
+    for h in extra_hypotheses:
+        if h.shape in seen:
+            continue
+        seen.add(h.shape)
+        merged.append(h)
+    if len(merged) == len(plan.hypotheses):
+        return plan
+    return replace(plan, hypotheses=_rank(tuple(merged)))
 
 
 # ---- SESSION-AWARE probing (cookie bisection + locked param mutation) --------

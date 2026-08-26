@@ -257,3 +257,33 @@ def test_investigate_max_rounds_threads_through():
     assert any(v.status == O.VERDICT_CONFIRMED and v.hypothesis.technique == "sql_injection"
                for v in report.verdicts)
 
+
+# ---- augment_plan: fold tool NOMINATIONS into an existing plan --------------
+
+def _thyp(technique, url, param, *, severity="MEDIUM", source="rule"):
+    from app.autonomous.hypotheses import Hypothesis
+    return Hypothesis(technique, url, "GET", param, "query", severity=severity, source=source)
+
+
+def test_augment_plan_merges_dedups_and_reranks():
+    from app.autonomous.surface import Surface
+    base = _thyp("xss", "http://shop.test/a", "q", severity="MEDIUM")
+    plan = O.Plan(surface=Surface(target="http://shop.test"), hypotheses=(base,))
+    dup = _thyp("xss", "http://shop.test/a", "q", severity="MEDIUM")          # same shape
+    tool = _thyp("sql_injection", "http://shop.test/b", "id", severity="HIGH", source="tool")
+
+    out = O.augment_plan(plan, [dup, tool])
+    assert len(out.hypotheses) == 2                       # dup dropped, tool added
+    assert out.hypotheses[0].technique == "sql_injection" # provable+HIGH re-ranked first
+    assert out.hypotheses[0].source == "tool"
+    assert out is not plan                                # a new plan, surface preserved
+    assert out.surface is plan.surface
+
+
+def test_augment_plan_noop_when_nothing_new_returns_same_plan():
+    from app.autonomous.surface import Surface
+    base = _thyp("xss", "http://shop.test/a", "q")
+    plan = O.Plan(surface=Surface(target="http://shop.test"), hypotheses=(base,))
+    assert O.augment_plan(plan, []) is plan                # empty → identity
+    assert O.augment_plan(plan, [base]) is plan            # only a known shape → identity
+

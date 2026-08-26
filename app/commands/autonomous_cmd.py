@@ -6,6 +6,8 @@ This is the fusion brain. One URL in, and Sentinel runs the whole loop itself:
     UNDERSTAND rank the 817-skill KB against the observed surface (breadth hints)
     HYPOTHESIZE qwen proposes techniques-at-places; a deterministic rule floor
                guarantees coverage even with the LLM entirely off
+    NOMINATE   opt-in proof-assist tools (sqlmap…) run as PROPOSERS and widen the
+               plan with source="tool" hypotheses (OFF unless $SENTINEL_ENABLE_TOOLS)
     EXECUTE    adjudicate every hypothesis CONCURRENTLY, then REFINE: a
                non-terminal (INCONCLUSIVE/ERROR) verdict is diagnosed and re-posed
                with a different probe shape and re-judged (bounded, deterministic);
@@ -20,8 +22,9 @@ This is the fusion brain. One URL in, and Sentinel runs the whole loop itself:
 
 EXECUTE is a bounded adaptive loop (see app.autonomous.refine): a wrong probe
 shape gets one or more re-tries, but a variant only supersedes its slot when it
-ranks strictly higher, so counts never inflate. The curated tool-selector is not
-yet wired into EXECUTE — no external exploitation tool runs here yet (roadmap).
+ranks strictly higher, so counts never inflate. The NOMINATE stage is opt-in and
+approval-gated (see app.tools.nominate): a tool never confirms — its nomination
+is a LEAD until the SAME pure judge reproduces it.
 
 Epistemic contract, preserved end-to-end: the LLM and tools only ever PROPOSE; a
 pure judge DISPOSES. A CONFIRMED finding is never a bare status — it is a
@@ -80,6 +83,69 @@ def _refine_rounds() -> int:
         return max(1, int(raw)) if raw else 2
     except ValueError:
         return 2
+
+
+# ---- NOMINATE stage (opt-in) — proof-assist tools widen the plan ------------
+# "tool-wielding" made real: with $SENTINEL_ENABLE_TOOLS set, curated proof-assist
+# tools (sqlmap first) run as NOMINATORS. Their output becomes source="tool"
+# hypotheses folded into the plan — the SAME pure judge then disposes each. OFF by
+# default: a normal run executes no external exploitation tool. Install stays
+# approval-gated; auto-install only with $SENTINEL_ASSUME_YES (headless-safe).
+
+def _approve_install(tool, recipe):
+    """Approve a tool auto-install only under an explicit pre-approval. Never
+    installs silently: without $SENTINEL_ASSUME_YES the install is declined and
+    the tool is simply skipped (a pre-installed tool still runs)."""
+    approved = _truthy_env("SENTINEL_ASSUME_YES")
+    console.print(Text(
+        f"tool install {'approved' if approved else 'declined'}: "
+        f"{getattr(recipe, 'display', tool)}",
+        style=_C_DIM if approved else _C_WARN))
+    return approved
+
+
+def _nominate_panel(extra) -> Panel:
+    table = Table(show_header=True, header_style=f"bold {_C_ACCENT}",
+                  border_style=_C_ACCENT, expand=True)
+    table.add_column("technique")
+    table.add_column("where")
+    table.add_column("param")
+    table.add_column("nomination", ratio=2, style=_C_DIM)
+    for h in extra[:12]:
+        table.add_row(_short(h.technique, 18), _short(h.url, 40),
+                      _short(h.param or "—", 14), _short(h.rationale, 48))
+    note = Text(
+        f"\n{len(extra)} tool nomination(s) folded into the plan. A tool only "
+        "PROPOSES — every nomination is a LEAD until the SAME pure differential "
+        "judge reproduces it. sqlmap/dalfox never confirm.",
+        style=_C_DIM,
+    )
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_ACCENT}]▐ NOMINATE · {len(extra)} TOOL PROPOSAL(S)[/{_C_ACCENT}]",
+        border_style=_C_ACCENT, padding=(1, 2),
+    )
+
+
+def _nominate_stage(plan, *, nominate=None):
+    """Run the opt-in proof-assist nominators and augment the plan with their
+    proposals. Returns the (possibly-augmented) plan. Never raises: a tool hiccup
+    degrades to the un-augmented plan."""
+    if nominate is None:
+        from app.tools.nominate import nominate as _nom
+        nominate = _nom
+    try:
+        extra = nominate(plan, approve=_approve_install)
+    except Exception:  # the nominator is best-effort; never sink the run
+        extra = []
+    if not extra:
+        return plan
+    console.print()
+    console.print(Rule(f"[bold {_C_ACCENT}]NOMINATE (tools propose)[/bold {_C_ACCENT}]",
+                       style=_C_ACCENT))
+    augmented = O.augment_plan(plan, extra)
+    console.print(_nominate_panel(extra))
+    return augmented
 
 
 # ---- PATCH→PROVE registry: technique → how to remediate its CONFIRMED class --
@@ -683,7 +749,10 @@ def _usage() -> Panel:
         ("  SENTINEL_SESSION_COOKIE   run the session-aware stage against a "
          "captured jar\n", _C_DIM),
         ("  SENTINEL_SESSION_URL      URL for the session stage (default: target)\n", _C_DIM),
-        ("  SENTINEL_ASSUME_YES=1     pre-approve the deploy gate (CI/headless)\n", _C_DIM),
+        ("  SENTINEL_ENABLE_TOOLS=1   run opt-in proof-assist tools (sqlmap…) as "
+         "nominators\n", _C_DIM),
+        ("  SENTINEL_ASSUME_YES=1     pre-approve the deploy gate + tool "
+         "auto-install (CI/headless)\n", _C_DIM),
         ("  SENTINEL_SKIP_REMEDIATION skip patch+prove entirely\n", _C_DIM),
     )
     return Panel(body, title=f"[{_C_PRIMARY}]▐ AUTONOMOUS[/{_C_PRIMARY}]",
@@ -715,11 +784,11 @@ def _provider_line(use_llm: bool) -> Text:
     )
 
 
-def run(arg, *, _recon=None, _index=None, _judges=None, use_llm=True):
+def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=True):
     """`autonomous <target>` — the dynamic autonomous pentest loop.
 
-    Seams (`_recon`, `_index`, `_judges`, `use_llm`) let the whole command run
-    offline in tests; live use takes their real defaults."""
+    Seams (`_recon`, `_index`, `_judges`, `_nominate`, `use_llm`) let the whole
+    command run offline in tests; live use takes their real defaults."""
     target = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not target:
         console.print(_usage())
@@ -749,6 +818,10 @@ def run(arg, *, _recon=None, _index=None, _judges=None, use_llm=True):
     if plan.skills:
         console.print(_skills_panel(plan.skills))
     console.print(_hypotheses_panel(plan))
+
+    # NOMINATE — opt-in proof-assist tools (sqlmap…) widen the plan as PROPOSERS.
+    # OFF unless $SENTINEL_ENABLE_TOOLS; the pure judge still disposes each.
+    plan = _nominate_stage(plan, nominate=_nominate)
 
     # SESSION-AWARE — opt-in (needs a captured jar).
     session_map = _session_stage(plan.surface, plan)

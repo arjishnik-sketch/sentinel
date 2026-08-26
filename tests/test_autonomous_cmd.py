@@ -219,3 +219,49 @@ def test_run_writes_proof_carrying_report(tmp_path, monkeypatch):
 
 def test_run_empty_target_prints_usage_and_returns_none():
     assert A.run("") is None
+
+
+# ---- NOMINATE end-to-end (tool proposes → augment_plan → judge disposes) -----
+
+def test_run_folds_tool_nomination_and_judge_confirms_it(tmp_path, monkeypatch):
+    """The full NOMINATE path: an injected tool nominator widens the plan with a
+    source="tool" hypothesis on a surface the rule floor never posed, and the SAME
+    pure judge then disposes it. A tool proposes; the judge confirms — never the
+    tool. Proves tool → augment_plan → judge, end-to-end and offline."""
+    monkeypatch.chdir(tmp_path)
+    tool_hyp = Hypothesis("sql_injection", "http://shop.test/api?cat=1", "GET",
+                          "cat", "query", severity="HIGH", source="tool")
+
+    def nominate(plan, approve=None):
+        return [tool_hyp]
+
+    # Validate ONLY the tool-nominated shape → isolates the fold-in as the cause.
+    def sqli_judge(h, p=None):
+        if h.source == "tool":
+            return ("VALIDATED", "boolean toggled", FakeEvidence(FakeGraph()))
+        return ("DISPROVED", "escaped", None)
+
+    report = A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+                   _index=None, _judges={"sql_injection": sqli_judge},
+                   _nominate=nominate, use_llm=False)
+
+    assert any(h.source == "tool" for h in report.plan.hypotheses)   # nomination folded in
+    tool_verdicts = [v for v in report.verdicts if v.hypothesis.source == "tool"]
+    assert tool_verdicts, "the tool nomination must be judged like any hypothesis"
+    v = tool_verdicts[0]
+    assert v.status == O.VERDICT_CONFIRMED                            # judge (not tool) confirmed
+    assert v.hypothesis.technique == "sql_injection" and v.hypothesis.param == "cat"
+
+
+def test_run_nominate_seam_faults_degrade_to_unaugmented_plan(tmp_path, monkeypatch):
+    """A flaky nominator never sinks the run — the loop proceeds on the plan as-is."""
+    monkeypatch.chdir(tmp_path)
+
+    def boom(plan, approve=None):
+        raise RuntimeError("sqlmap exploded")
+
+    report = A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+                   _index=None, _judges={}, _nominate=boom, use_llm=False)
+
+    assert isinstance(report, O.Report)
+    assert not any(h.source == "tool" for h in report.plan.hypotheses)
