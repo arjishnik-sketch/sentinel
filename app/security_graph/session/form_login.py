@@ -36,11 +36,20 @@ class LoginCaptureError(RuntimeError):
     """Raised when a credential login cannot be driven to a captured session."""
 
 
-# Input names that hint at the username/identifier field, and the input `type`s
-# that can legitimately hold one. Used ONLY to fill the right field — never to
-# assert anything; the pure judge still decides every downstream verdict.
+# Input names that hint at the username/identifier field. Used ONLY to fill the
+# right field — never to assert anything; the pure judge still decides every
+# downstream verdict.
 _USER_FIELD_HINTS = ("user", "email", "login", "account", "identifier", "uname")
-_USER_INPUT_TYPES = ("email", "text", "tel", "")
+
+# Input `type`s that can NEVER hold a typed username/identifier. Everything else
+# — text, email, tel, an unspecified type, or a non-standard one such as the
+# PortSwigger-ism ``type=username`` — is a legitimate candidate. We exclude the
+# impossible rather than allow-list the expected, so a real login form's quirky
+# input type never silently drops the username field.
+_NON_USER_INPUT_TYPES = frozenset({
+    "password", "hidden", "checkbox", "radio", "submit", "button",
+    "file", "image", "reset", "range", "color",
+})
 
 # Response-body keys a SPA/JSON login commonly parks a bearer/JWT under.
 _BEARER_KEYS = ("token", "access_token", "accesstoken", "jwt", "authtoken",
@@ -106,20 +115,23 @@ class _FormParser(HTMLParser):
 
 def _choose_username_field(inputs: list[dict], password_index: int) -> str:
     """Pick the field to fill with the username. Preference order: an explicit
-    email input, then a hint-named text-ish input, then the last text-ish named
-    input appearing BEFORE the password (the classic username-above-password)."""
+    email input, then a hint-named fillable input, then the last fillable named
+    input appearing BEFORE the password (the classic username-above-password).
+    "Fillable" excludes only the types that can never hold a typed identifier
+    (password/hidden/checkbox/...), so a non-standard ``type=username`` still
+    wins rather than being silently skipped."""
     for inp in inputs:
         if inp["type"] == "email" and inp["name"]:
             return inp["name"]
     for inp in inputs:
-        if (inp["name"] and inp["type"] in _USER_INPUT_TYPES
+        if (inp["name"] and inp["type"] not in _NON_USER_INPUT_TYPES
                 and any(h in inp["name"].lower() for h in _USER_FIELD_HINTS)):
             return inp["name"]
     chosen = ""
     for idx, inp in enumerate(inputs):
         if idx >= password_index:
             break
-        if inp["name"] and inp["type"] in _USER_INPUT_TYPES:
+        if inp["name"] and inp["type"] not in _NON_USER_INPUT_TYPES:
             chosen = inp["name"]
     return chosen
 

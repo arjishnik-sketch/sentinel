@@ -117,6 +117,33 @@ def test_choose_username_field_prefers_email_then_hint_then_preceding():
     assert _choose_username_field(preceding, 1) == "first"
 
 
+def test_choose_username_field_handles_portswigger_type_username():
+    # PortSwigger's login form uses the NON-standard `type=username`; the field
+    # must still be chosen (its name hints "user"), never silently dropped, or the
+    # POST goes out with no username and the login fails.
+    inputs = [{"name": "csrf", "type": "hidden", "value": "tok"},
+              {"name": "username", "type": "username", "value": ""},
+              {"name": "password", "type": "password", "value": ""}]
+    assert _choose_username_field(inputs, 2) == "username"
+
+
+def test_find_login_form_reads_portswigger_shape_with_csrf_and_type_username():
+    html = (
+        '<form class=login-form method=POST action="/login">'
+        '<input required type="hidden" name="csrf" value="ABQmoir">'
+        '<input required type=username name="username" autofocus>'
+        '<input required type=password name="password">'
+        "</form>"
+    )
+    form = find_login_form(html, "http://lab.test/login")
+    assert form is not None
+    assert form.username_field == "username"
+    assert form.password_field == "password"
+    assert form.data == {"csrf": "ABQmoir"}
+    body = form.payload("wiener", "peter")
+    assert body == {"csrf": "ABQmoir", "username": "wiener", "password": "peter"}
+
+
 # ---- pure: bearer extraction from a JSON body -------------------------------
 
 
