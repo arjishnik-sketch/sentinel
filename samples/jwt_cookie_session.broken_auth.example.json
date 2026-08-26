@@ -14,6 +14,12 @@
         "route": { "method": "GET", "path": "/admin" },
         "forge_claims": { "sub": "administrator" },
         "severity": "HIGH",
+        "impact": {
+          "match": "delete",
+          "params": { "username": "carlos" },
+          "discover": { "method": "GET", "path": "/admin" },
+          "rationale": "OPTIONAL, doubly-gated impact demonstration. Once the forgery is CONFIRMED, and ONLY if the operator opts in via SENTINEL_ENABLE_IMPACT=1, Sentinel exercises the bypass's concrete effect: it fetches the admin panel `discover` route WITH the forged admin token, dynamically parses that LIVE page for the link/form whose href/action/text contains `match` (\"delete\") preferring the one already carrying every `params` value (the exact per-object action, e.g. /admin/delete?username=carlos), issues it with the forged token, then issues the SAME action anonymously as a negative control. The declared params are ground truth (never a secret); the forged token is the only secret and rides the request header masked in every report. This is the one place the engine issues a real STATE-CHANGING request, so it never fires by default and never for a DISPROVED forgery. Removing this block leaves the check prove-only. Note: this is exactly the PortSwigger 'delete carlos' solve condition, so a lab flips to solved when the demonstrated delete lands."
+        },
         "rationale": "VERTICAL token-validation flaw. A plain user's genuine RS256 session is DENIED at /admin, but if the server accepts an alg=none forgery with sub=administrator the signature is not authentically verified. `forge_claims` declares that escalation target (sub -> administrator) as operator ground truth, baked into the forged payload; the genuine token proves the session is live on /my-account (the control the user owns); the forged token is minted OFFLINE and PURELY by Sentinel from that captured token. The declared claim never fabricates a finding — the pure judge still disposes the live three-probe differential. alg_none is guard-provable, so the durable fix (reject unsigned/alg=none at the gateway or pin the algorithm handler-side) is demonstrable."
       }
     ]

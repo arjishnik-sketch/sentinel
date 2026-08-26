@@ -121,6 +121,44 @@ class ControlRoute:
 
 
 @dataclass(frozen=True)
+class ImpactAction:
+    """An operator-declared privileged action to EXERCISE with the forged token,
+    ONLY after the forgery is CONFIRMED — the concrete impact of the bypass (e.g.
+    delete a user from the admin panel that the forged admin token now reaches).
+
+    The discovery is DYNAMIC and target-agnostic: Sentinel fetches ``discover``
+    (default: the confirmed breach route) WITH the forged token, parses the live
+    page for the link/form whose href/action/text contains ``match`` — preferring
+    the one that already carries every ``params`` value (the exact per-object
+    action, e.g. ``…/delete?username=carlos``) — builds the concrete request, and
+    issues it with the forged token. It NEVER hardcodes a route: only the operator's
+    INTENT (``match`` + ``params``) is declared; the URL is read off the real page.
+    An explicit ``action`` route may be given when the operator already knows it.
+
+    This performs a real STATE-CHANGING request against the target, so it is the one
+    part of the engine that steps beyond "prove, don't exploit". It is therefore
+    doubly gated: it runs ONLY when a check declares it AND the operator opts in
+    (``SENTINEL_ENABLE_IMPACT``), and ONLY against a boundary a pure judge already
+    CONFIRMED. It fires an anonymous negative-control of the SAME action too, so the
+    report can show the action required the forged privilege — the impact is itself
+    a differential, not a bare fire-and-forget. The operator-declared params are
+    ground truth (never a secret); the forged token that authorises the action is
+    the only secret, and it rides the request header masked in every report."""
+
+    match: str = ""                                  # substring identifying the action link/form
+    params: tuple[tuple[str, str], ...] = ()         # values to select/fill (e.g. username=carlos)
+    discover: "ControlRoute | None" = None           # page to fetch to find it; default = breach route
+    action: "ControlRoute | None" = None             # explicit action route (bypasses discovery)
+    rationale: str = ""
+
+    @property
+    def declared(self) -> bool:
+        """An impact is meaningful only if it names WHAT to do — a ``match`` to
+        discover, or an explicit ``action`` route. An empty block is a no-op."""
+        return bool(self.match or self.action is not None)
+
+
+@dataclass(frozen=True)
 class BrokenAuthPrincipal:
     """
     The one authenticated account whose genuine token is forged FROM.
@@ -151,6 +189,10 @@ class BrokenAuthCheck:
     VERTICAL bypass where the genuine principal is denied at the breach route.
     They are declared ground truth (never a secret); the pure judge still disposes
     the live differential, so a declared claim never fabricates a finding.
+    `impact` is an OPTIONAL, operator-declared privileged action to exercise with
+    the forged token AFTER the forgery is CONFIRMED (e.g. delete a user) — a
+    dynamically-discovered, doubly-gated demonstration of the bypass's concrete
+    effect. See :class:`ImpactAction`. Absent by default → prove-only, no action.
     """
 
     forgery: str
@@ -160,6 +202,7 @@ class BrokenAuthCheck:
     public_key: str = ""
     secret_candidates: tuple[str, ...] = ()
     forge_claims: tuple[tuple[str, Any], ...] = ()
+    impact: "ImpactAction | None" = None
     rationale: str = ""
 
 
@@ -296,6 +339,38 @@ def _parse_forge_claims(payload: Any) -> tuple[tuple[str, Any], ...]:
     return tuple(out)
 
 
+def _parse_params(payload: Any, field_name: str) -> tuple[tuple[str, str], ...]:
+    """Parse ``impact.params`` — the values that SELECT and FILL the privileged
+    action (e.g. ``{"username": "carlos"}``). Accepts an object or a list of
+    ``[name, value]`` pairs, exactly like ``headers``. Values are coerced to
+    strings (they land in a URL query or a form body). Ground truth, not a secret."""
+    return _parse_headers(payload, field_name)
+
+
+def _parse_impact(payload: Any) -> "ImpactAction | None":
+    """Parse the optional ``impact`` block — the privileged action to exercise with
+    the forged token after the forgery is CONFIRMED. Returns ``None`` when absent or
+    when it names nothing to do (no ``match`` and no explicit ``action``), so a bare
+    ``{}`` degrades to prove-only rather than raising."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "broken-auth matrix: 'impact' must be an object declaring the "
+            "privileged action to exercise with the forged token."
+        )
+    match = payload.get("match", "")
+    match = match.strip() if isinstance(match, str) else ""
+    params = _parse_params(payload.get("params"), "impact.params")
+    discover = _parse_route(payload.get("discover"), "impact.discover")
+    action = _parse_route(payload.get("action"), "impact.action")
+    rationale = payload.get("rationale", "")
+    rationale = rationale.strip() if isinstance(rationale, str) else ""
+    impact = ImpactAction(match=match, params=params, discover=discover,
+                          action=action, rationale=rationale)
+    return impact if impact.declared else None
+
+
 def _parse_check(payload: Any) -> BrokenAuthCheck:
     if not isinstance(payload, dict):
         raise ValueError("broken-auth matrix: each check must be an object.")
@@ -330,6 +405,8 @@ def _parse_check(payload: Any) -> BrokenAuthCheck:
 
     forge_claims = _parse_forge_claims(payload.get("forge_claims"))
 
+    impact = _parse_impact(payload.get("impact"))
+
     rationale = payload.get("rationale", "")
     rationale = rationale.strip() if isinstance(rationale, str) else ""
 
@@ -341,6 +418,7 @@ def _parse_check(payload: Any) -> BrokenAuthCheck:
         public_key=public_key,
         secret_candidates=secret_candidates,
         forge_claims=forge_claims,
+        impact=impact,
         rationale=rationale,
     )
 

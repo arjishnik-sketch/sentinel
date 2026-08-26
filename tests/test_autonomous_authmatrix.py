@@ -312,3 +312,43 @@ def test_matrix_confirmed_verdict_renders_in_report():
     model = R.build_report(report, target=TARGET)
     assert model.counts["confirmed"] == 1
     assert model.findings[0].technique == "broken_auth"
+
+
+# ---- impact opt-in resolution (state-changing demo is doubly gated) ---------
+
+def test_resolve_context_impact_disabled_by_default():
+    ctx = AM.resolve_auth_context(
+        OperatorDirective(token="t.t.t", matrix_path="/m.json"), env={},
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    assert ctx.impact_enabled is False
+    assert not any("impact demonstration ENABLED" in n for n in ctx.notes)
+
+
+def test_resolve_context_impact_enabled_by_env_flag():
+    ctx = AM.resolve_auth_context(
+        OperatorDirective(token="t.t.t", matrix_path="/m.json"),
+        env={"SENTINEL_ENABLE_IMPACT": "1"},
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    assert ctx.impact_enabled is True
+    assert any("impact demonstration ENABLED" in n for n in ctx.notes)
+
+
+def test_run_auth_matrix_forwards_impact_flag():
+    seen = {}
+
+    def spy_broken_auth(target_base, policy, token, *, source, impact_enabled,
+                        _run, graph_factory):
+        seen["impact_enabled"] = impact_enabled
+        return []
+
+    ctx = AM.AuthContext(broken_auth_policy=_ba_policy(), privesc_policy=None,
+                         token="t.t.t", impact_enabled=True)
+    # patch the module-level broken_auth_verdicts the orchestrator calls
+    original = AM.broken_auth_verdicts
+    AM.broken_auth_verdicts = spy_broken_auth
+    try:
+        AM.run_auth_matrix(TARGET, ctx,
+                           _run_broken_auth=lambda *a, **k: [])
+    finally:
+        AM.broken_auth_verdicts = original
+    assert seen["impact_enabled"] is True

@@ -358,6 +358,23 @@ prove in a **separate stage after EXECUTE**, gated on the context you steer in:
 - **privilege_escalation** needs a ≥1-check matrix with declared principal headers, exactly
   as `investigate` consumes it.
 
+**Optional impact demonstration (state-changing, doubly gated).** Proving the bypass is the
+default; *demonstrating its concrete impact* — using the forged admin token to perform a real
+privileged action (e.g. delete a user) — is an explicit opt-in. A broken_auth check may declare
+an `impact` block naming only **intent** (`match` — a substring like `"delete"` — and `params`
+that pick the object, e.g. `{"username": "carlos"}`); Sentinel then fetches the admin page the
+bypass unlocked **with the forged token**, dynamically parses that live page for the matching
+link/form (preferring the one already carrying every declared param value — the exact per-object
+action), issues it with the forged token, and issues the **same action anonymously** as a
+negative control. It never hardcodes a route. This is the one place the engine issues a real
+state-changing request, so it fires **only** when the check declares `impact` **and** the
+operator sets `$SENTINEL_ENABLE_IMPACT=1` **and** only after a `CONFIRMED` forgery — never for a
+`DISPROVED`/`INCONCLUSIVE` one. The impact is itself a differential (the forged token performed
+the action *and* an anonymous caller was denied it), the forged credential rides the request
+**masked** in every report, and the declared params are ground truth, never a secret. (This is
+exactly the PortSwigger "delete `carlos`" solve condition, so a lab flips to *solved* when the
+demonstrated delete lands.)
+
 Resolution precedence mirrors `investigate`: the dedicated `$SENTINEL_BROKEN_AUTH_POLICY` /
 `$SENTINEL_PRIVESC_POLICY`, then the steer's `matrix <path>`, then the combined
 `$SENTINEL_ACCESS_POLICY`; the token comes from the steer's `token` line or

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
+from urllib.parse import urlsplit
 
 from . import orchestrator as O
 from .hypotheses import Hypothesis
@@ -39,9 +40,22 @@ from .judges import JudgeEvidence
 from app.security_graph.graph import SecurityGraph
 from app.security_graph.broken_auth.broken_auth_policy import (
     BrokenAuthPolicy, BrokenAuthPrincipal, load_broken_auth_policy)
-from app.security_graph.broken_auth.run import run_broken_auth_investigation
+from app.security_graph.broken_auth.run import run_broken_auth_investigation, _probe_headers
+from app.security_graph.broken_auth.judge import broken_auth_expectation
+from app.security_graph.broken_auth.seed import _aspect as _check_aspect
+from app.security_graph.broken_auth.impact import exercise_impact
 from app.security_graph.privesc.privesc_policy import load_privesc_policy
 from app.security_graph.privesc.run import run_privesc_investigation
+
+_TRUE = frozenset({"1", "true", "yes", "on"})
+
+
+def _impact_enabled(env) -> bool:
+    """The state-changing impact demonstration is OFF unless the operator explicitly
+    opts in via ``SENTINEL_ENABLE_IMPACT`` — it issues a real privileged request
+    against the target, so it must never fire by default."""
+    return str(env.get("SENTINEL_ENABLE_IMPACT", "")).strip().lower() in _TRUE
+
 
 @dataclass(frozen=True)
 class AuthContext:
@@ -55,6 +69,7 @@ class AuthContext:
     broken_auth_policy: object = None      # BrokenAuthPolicy | None
     privesc_policy: object = None          # PrivEscPolicy | None
     token: "str | None" = None
+    impact_enabled: bool = False
     notes: tuple = ()
 
     @property
@@ -130,35 +145,120 @@ def _synthetic_hypothesis(technique, result, graph, target_base, *, source):
     )
 
 
-def _to_verdict(technique, result, graph, policy, target_base, *, source):
+def _to_verdict(technique, result, graph, policy, target_base, *, source, impact=None):
     """Adapt one ProbeResult into a Verdict — VALIDATED→CONFIRMED via the SINGLE
     orchestrator translation site, carrying the proven graph as JudgeEvidence so
-    the report reconstructs full steps-to-reproduce."""
+    the report reconstructs full steps-to-reproduce. When an ``impact`` observation
+    is supplied (a CONFIRMED forgery whose declared action was exercised), its
+    token-safe note is appended to the verdict detail; the exercised request itself
+    is already recorded on ``graph`` and renders as an additional reproduction step."""
     hyp = _synthetic_hypothesis(technique, result, graph, target_base, source=source)
     evidence = JudgeEvidence(
         technique=technique, result=result, graph=graph,
         policy=policy, target_base=target_base,
     )
+    detail = getattr(result, "reason", "") or ""
+    note = getattr(impact, "note", "") if impact is not None else ""
+    if note:
+        prefix = "IMPACT DEMONSTRATED" if getattr(impact, "demonstrated", False) else "impact"
+        detail = f"{detail} — {prefix}: {note}" if detail else f"{prefix}: {note}"
     return O.Verdict(
         hypothesis=hyp,
         status=O.to_verdict_status(getattr(result, "status", "INCONCLUSIVE")),
-        detail=getattr(result, "reason", "") or "",
+        detail=detail,
         evidence=evidence,
     )
 
 
 # ---- the stage: run the real judges, adapt their results --------------------
 
+def _join_url(target_base, path):
+    if "://" in path:
+        return path
+    base = target_base.rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    return base + path
+
+
+def _default_impact_executor(target_base):
+    """A host-scoped executor for the impact stage — the SAME scope guard the
+    prove-chain uses, so an impact request can never leave the engagement host."""
+    from app.security_graph.broken_auth.executor import BrokenAuthProbeExecutor
+
+    host = urlsplit(
+        target_base if "://" in target_base else f"http://{target_base}"
+    ).netloc.lower()
+    return BrokenAuthProbeExecutor(allowed_hosts={host} if host else None)
+
+
+def _run_impacts(target_base, policy, graph, results, *, _exercise=exercise_impact,
+                 executor_factory=None):
+    """For every CONFIRMED (VALIDATED) forgery whose check declares an ``impact``,
+    exercise that privileged action with the ALREADY-forged token (recovered from
+    the graph, never re-derived). Returns ``{hypothesis_id: ImpactObservation}``.
+    Runs only when called (the caller gates on the opt-in flag)."""
+    by_aspect = {
+        _check_aspect(check): check
+        for check in getattr(policy, "checks", ())
+        if getattr(check, "impact", None) is not None and check.impact.declared
+    }
+    if not by_aspect:
+        return {}
+
+    executor_factory = executor_factory or _default_impact_executor
+    executor = None
+    out = {}
+    for result in results:
+        if getattr(result, "status", "") != "VALIDATED":
+            continue
+        hyp = graph.hypotheses.get(result.hypothesis_id)
+        if hyp is None or hyp.identity is None:
+            continue
+        check = by_aspect.get(hyp.identity.action)
+        if check is None:
+            continue
+        _, breach_headers = _probe_headers(graph, hyp)
+        if not breach_headers:
+            continue
+        expectation = broken_auth_expectation(
+            graph, resource_id=hyp.identity.resource_id, aspect=hyp.identity.action)
+        breach_url = (expectation.breach_url if expectation is not None
+                      else _join_url(target_base, check.path))
+        breach_method = (expectation.method if expectation is not None
+                         else check.method)
+        if executor is None:
+            executor = executor_factory(target_base)
+        out[result.hypothesis_id] = _exercise(
+            target_base, impact=check.impact, forged_headers=breach_headers,
+            graph=graph, executor=executor, hypothesis_id=hyp.id,
+            identity=hyp.identity, breach_url=breach_url, breach_method=breach_method,
+            success_statuses=getattr(policy, "success_statuses", tuple(range(200, 300))))
+    return out
+
+
 def broken_auth_verdicts(target_base, policy, token, *, source="operator",
-                         _run=run_broken_auth_investigation, graph_factory=SecurityGraph):
+                         impact_enabled=False,
+                         _run=run_broken_auth_investigation, graph_factory=SecurityGraph,
+                         _exercise=exercise_impact, executor_factory=None):
     """Inject the live token, run the broken_auth prove-chain on a fresh graph, and
-    adapt every ProbeResult (CONFIRMED/DISPROVED/INCONCLUSIVE) into a Verdict."""
+    adapt every ProbeResult (CONFIRMED/DISPROVED/INCONCLUSIVE) into a Verdict.
+
+    When ``impact_enabled`` (the operator opted in), a CONFIRMED forgery whose check
+    declares an ``impact`` also has that privileged action exercised with the forged
+    token — a doubly-gated demonstration recorded on the same graph. The impact NEVER
+    runs for a DISPROVED/INCONCLUSIVE result: only a proven bypass is exercised."""
     if not getattr(policy, "checks", ()) or not token:
         return []
     bound = inject_bearer(policy, token)
     graph = graph_factory()
     results = _run(graph, bound, target_base=target_base)
-    return [_to_verdict("broken_auth", r, graph, bound, target_base, source=source)
+    impacts = {}
+    if impact_enabled:
+        impacts = _run_impacts(target_base, bound, graph, results,
+                               _exercise=_exercise, executor_factory=executor_factory)
+    return [_to_verdict("broken_auth", r, graph, bound, target_base, source=source,
+                        impact=impacts.get(r.hypothesis_id))
             for r in results]
 
 
@@ -187,7 +287,8 @@ def run_auth_matrix(target_base, context, *, source="operator",
     if context.has_broken_auth:
         verdicts += broken_auth_verdicts(
             target_base, context.broken_auth_policy, context.token,
-            source=source, _run=_run_broken_auth, graph_factory=graph_factory)
+            source=source, impact_enabled=context.impact_enabled,
+            _run=_run_broken_auth, graph_factory=graph_factory)
     if context.has_privesc:
         verdicts += privesc_verdicts(
             target_base, context.privesc_policy,
@@ -292,10 +393,15 @@ def resolve_auth_context(directive=None, *, env=None, target=None,
             notes.append(f"credential login as {username!r}: {capture_note}")
 
     # Emitted AFTER the login attempt so it reflects the FINAL token state.
+    impact_enabled = _impact_enabled(env)
     if ba_policy is not None:
         notes.append(
             f"broken_auth matrix: {len(ba_policy.checks)} check(s), "
             + ("token captured" if token else "NO token — will skip"))
+        if impact_enabled and token:
+            notes.append(
+                "impact demonstration ENABLED (SENTINEL_ENABLE_IMPACT) — a proven "
+                "forgery will exercise its declared privileged action")
 
     pe_policy = None
     if pe_path:
@@ -311,4 +417,5 @@ def resolve_auth_context(directive=None, *, env=None, target=None,
                     f"{len(candidate.principals)} principal(s)")
 
     return AuthContext(broken_auth_policy=ba_policy, privesc_policy=pe_policy,
-                       token=token, notes=tuple(notes))
+                       token=token, impact_enabled=impact_enabled,
+                       notes=tuple(notes))

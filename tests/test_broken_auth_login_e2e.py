@@ -204,3 +204,113 @@ def test_sentinel_independently_logs_in_and_confirms_jwt_alg_none_bypass():
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---- impact demonstration: forge → reach /admin → delete carlos (real HTTP) --
+# The lab's SOLVE condition is not "prove the bypass" but "use the forged admin
+# privilege to delete carlos". This stub adds the admin panel the forged token
+# unlocks and a real state-changing delete, so the full opt-in impact chain —
+# dynamic discovery off the LIVE page, forged action, anonymous negative control —
+# runs against real sockets, exactly as it would against the lab.
+
+_DELETIONS: list[str] = []
+
+_ADMIN_PANEL = (
+    "<html><body><section><h1>Users</h1>"
+    '<div>wiener - <a href="/admin/delete?username=wiener">Delete</a></div>'
+    '<div>carlos - <a href="/admin/delete?username=carlos">Delete</a></div>'
+    "</section></body></html>"
+).encode("utf-8")
+
+
+class _FlawedJwtLabWithAdmin(_FlawedJwtLab):
+    """The same flawed-signature lab, now serving the admin PANEL (with per-user
+    delete links) at /admin and a real /admin/delete that only an admin session may
+    invoke — so the forged token's concrete impact (deleting carlos) is exercisable."""
+
+    def do_GET(self):
+        path = urlsplit(self.path).path
+        sub = _sub_from_cookie(self.headers.get("Cookie"))
+        if path == "/admin":
+            if sub is None:
+                self._send(401)
+            elif sub == "administrator":
+                self._send(200, _ADMIN_PANEL)   # the panel the bypass unlocks
+            else:
+                self._send(403)
+        elif path == "/admin/delete":
+            username = dict(urllib.parse.parse_qsl(urlsplit(self.path).query)).get(
+                "username", "")
+            if sub == "administrator":
+                _DELETIONS.append(username)      # the real state change
+                self._send(200, b"deleted")
+            else:
+                self._send(401)                  # anonymous / non-admin denied
+        else:
+            super().do_GET()
+
+
+def test_sentinel_demonstrates_impact_by_deleting_carlos_with_the_forged_token():
+    _DELETIONS.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FlawedJwtLabWithAdmin)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        policy = parse_broken_auth_policy(
+            {
+                "broken_auth_matrix": {
+                    "token_location": {"kind": "cookie", "name": "session"},
+                    "principal": {
+                        "name": "wiener", "role": "user",
+                        "control": {"method": "GET", "path": "/my-account"},
+                    },
+                    "checks": [
+                        {
+                            "forgery": "alg_none",
+                            "route": {"method": "GET", "path": "/admin"},
+                            "forge_claims": {"sub": "administrator"},
+                            "severity": "HIGH",
+                            "impact": {
+                                "match": "delete",
+                                "params": {"username": "carlos"},
+                                "discover": {"method": "GET", "path": "/admin"},
+                            },
+                        }
+                    ],
+                }
+            }
+        )
+        directive = OperatorDirective(
+            credentials=("wiener", "peter"),
+            login_url=f"{base}/login",
+            matrix_path="/matrix.json",
+        )
+        # The operator opts in to the state-changing demonstration.
+        ctx = AM.resolve_auth_context(
+            directive, env={"SENTINEL_ENABLE_IMPACT": "1"}, target=base,
+            load_broken_auth=lambda _p: policy,
+            load_privesc=lambda _p: PrivEscPolicy(),
+        )
+        assert ctx.impact_enabled is True
+
+        verdicts = AM.run_auth_matrix(base, ctx)
+        broken_auth = [v for v in verdicts
+                       if v.hypothesis.technique == "broken_auth"]
+        assert len(broken_auth) == 1
+        v = broken_auth[0]
+        assert v.status == O.VERDICT_CONFIRMED
+
+        # The bypass was not merely proven — the forged admin token DELETED carlos,
+        # dynamically discovered off the live admin panel. This is the lab's solve.
+        assert "carlos" in _DELETIONS
+        assert "IMPACT DEMONSTRATED" in v.detail
+        assert "carlos" in v.detail
+
+        # Secrets never leak: neither the captured genuine token nor the password.
+        joined = " ".join(ctx.notes) + " " + v.detail
+        assert GENUINE_JWT not in joined
+        assert "peter" not in joined
+    finally:
+        server.shutdown()
+        server.server_close()
