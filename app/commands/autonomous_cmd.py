@@ -6,12 +6,22 @@ This is the fusion brain. One URL in, and Sentinel runs the whole loop itself:
     UNDERSTAND rank the 817-skill KB against the observed surface (breadth hints)
     HYPOTHESIZE qwen proposes techniques-at-places; a deterministic rule floor
                guarantees coverage even with the LLM entirely off
-    EXECUTE    adjudicate every hypothesis CONCURRENTLY; optional session-aware
-               stage (cookie bisection + session-locked param mutation)
+    EXECUTE    adjudicate every hypothesis CONCURRENTLY, then REFINE: a
+               non-terminal (INCONCLUSIVE/ERROR) verdict is diagnosed and re-posed
+               with a different probe shape and re-judged (bounded, deterministic);
+               optional session-aware stage (cookie bisection + param mutation)
     PROVE      pure differential judges dispose — VALIDATED becomes CONFIRMED
     PATCH+PROVE synthesize a corrective control, take the operator's approval,
                stand up a live loopback shield, and re-run the SAME judge to
                prove the contradiction no longer reproduces (VALIDATED→DISPROVED)
+    REPORT     assemble the proof-carrying deliverable (markdown + json) from the
+               proven graph + remediation outcomes; an optional advisory LLM
+               exec-summary garnishes it but contributes no fact
+
+EXECUTE is a bounded adaptive loop (see app.autonomous.refine): a wrong probe
+shape gets one or more re-tries, but a variant only supersedes its slot when it
+ranks strictly higher, so counts never inflate. The curated tool-selector is not
+yet wired into EXECUTE — no external exploitation tool runs here yet (roadmap).
 
 Epistemic contract, preserved end-to-end: the LLM and tools only ever PROPOSE; a
 pure judge DISPOSES. A CONFIRMED finding is never a bare status — it is a
@@ -37,6 +47,7 @@ from rich.text import Text
 
 from app.autonomous import judges as J
 from app.autonomous import orchestrator as O
+from app.autonomous import report as R
 
 console = Console()
 
@@ -59,6 +70,16 @@ def _short(text, width: int = 64) -> str:
 
 def _truthy_env(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in _TRUTHY
+
+
+def _refine_rounds() -> int:
+    """Total EXECUTE passes: 1 = single forward pass, ≥2 enables the
+    failure-cause + retry loop. Tunable via $SENTINEL_REFINE_ROUNDS (default 2)."""
+    raw = (os.environ.get("SENTINEL_REFINE_ROUNDS") or "").strip()
+    try:
+        return max(1, int(raw)) if raw else 2
+    except ValueError:
+        return 2
 
 
 # ---- PATCH→PROVE registry: technique → how to remediate its CONFIRMED class --
@@ -580,6 +601,68 @@ def _remediate_confirmed(verdicts, *, registry=None, gate=None):
     return all_outcomes
 
 
+# ---- REPORT — assemble + persist the proof-carrying deliverable -------------
+
+def _narration_seam(use_llm):
+    """Return a ``complete(prompt) -> str`` seam for the advisory exec-summary,
+    or ``None`` when narration is disabled/offline. The narrator only ever sees a
+    metadata-only digest (see ``report._digest``) and its prose is fenced as
+    advisory; the LLM proposes, it never disposes. Any failure degrades to no
+    summary, so the report always renders without depending on a model."""
+    if not use_llm:
+        return None
+
+    def complete(prompt):
+        from app.autonomous.llm import ask_json
+        res = ask_json(
+            "You are a penetration-test report writer. Reply with ONLY a JSON "
+            'object of the form {"summary": "<plain prose, no markdown>"}.',
+            prompt,
+            num_predict=400,
+        )
+        if res.ok and isinstance(res.data, dict):
+            return str(res.data.get("summary", "") or "")
+        return ""
+
+    return complete
+
+
+def _report_panel(artifacts, model) -> Panel:
+    c = model.counts
+    body = Text.assemble(
+        ("proof-carrying report written\n\n", f"bold {_C_OK}"),
+        ("  markdown  ", "white"), (f"{artifacts.markdown_path}\n", _C_PRIMARY),
+        ("  json      ", "white"), (f"{artifacts.json_path}\n\n", _C_PRIMARY),
+        (f"  {c['confirmed']} confirmed", _C_BAD if c["confirmed"] else _C_DIM),
+        (f" · {c['fix_proven']} fix-proven", _C_OK if c["fix_proven"] else _C_DIM),
+        (f" · {c['leads']} leads", _C_LEAD if c["leads"] else _C_DIM),
+        (f" · {c['disproved']} disproved · {c['inconclusive']} inconclusive · "
+         f"{c['errors']} errors", _C_DIM),
+    )
+    return Panel(body, title=f"[bold {_C_OK}]▐ REPORT[/bold {_C_OK}]",
+                 border_style=_C_OK)
+
+
+def _emit_report(report, outcomes, *, target, use_llm, out_dir="reports"):
+    """Stage 10 — build the pure report model from the proven graph + remediation
+    outcomes, attach an optional advisory exec-summary, and persist md+json. Every
+    fact comes from the judges; the narrator only garnishes. Never raises: a
+    reporting hiccup must not sink an otherwise-successful run. Returns the written
+    :class:`report.ReportArtifacts`, or ``None`` if reporting was skipped."""
+    console.print()
+    console.print(Rule(f"[bold {_C_OK}]REPORT[/bold {_C_OK}]", style=_C_OK))
+    try:
+        model = R.build_report(report, outcomes=tuple(outcomes or ()), target=target)
+        narrative = R.narrate(model, complete=_narration_seam(use_llm))
+        artifacts = R.write_report(model, out_dir=out_dir, narrative=narrative)
+    except Exception as exc:  # reporting is best-effort; never crash the loop
+        console.print(Text(f"report generation skipped ({_short(str(exc), 80)})",
+                           style=_C_WARN))
+        return None
+    console.print(_report_panel(artifacts, model))
+    return artifacts
+
+
 # ---- entrypoint -------------------------------------------------------------
 
 def _usage() -> Panel:
@@ -672,21 +755,29 @@ def run(arg, *, _recon=None, _index=None, _judges=None, use_llm=True):
     if session_map is not None:
         console.print(_session_panel(session_map))
 
-    # EXECUTE + PROVE — concurrent adjudication by the pure judges.
+    # EXECUTE + PROVE — concurrent adjudication by the pure judges, with a bounded
+    # FAILURE-CAUSE + RETRY loop: a non-terminal verdict is re-posed with a
+    # different probe shape and re-judged (the judge still disposes each variant).
     judges = _judges if _judges is not None else J.default_judges()
+    rounds = _refine_rounds()
     console.print()
     console.print(Rule(f"[bold {_C_PRIMARY}]EXECUTE + PROVE[/bold {_C_PRIMARY}]",
                        style=_C_PRIMARY))
     with console.status(
             f"[{_C_PRIMARY}]adjudicating hypotheses concurrently — live "
             f"differential judges…[/{_C_PRIMARY}]", spinner="dots"):
-        verdicts = O.run_plan(plan, judges)
+        verdicts = O.run_plan_adaptive(plan, judges, max_rounds=rounds)
     console.print(_verdicts_panel(verdicts))
 
     # PATCH + PROVE — gated on the operator's approval.
-    _remediate_confirmed(verdicts)
+    outcomes = _remediate_confirmed(verdicts)
 
-    return O.Report(plan=plan, verdicts=tuple(verdicts))
+    report = O.Report(plan=plan, verdicts=tuple(verdicts))
+
+    # REPORT — persist the proof-carrying deliverable (markdown + json).
+    _emit_report(report, outcomes, target=target, use_llm=use_llm)
+
+    return report
 
 
 

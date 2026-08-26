@@ -175,7 +175,8 @@ def test_session_stage_bisects_and_panel_renders():
 
 # ---- end-to-end (offline) ---------------------------------------------------
 
-def test_run_end_to_end_offline_is_tiered():
+def test_run_end_to_end_offline_is_tiered(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)   # report writes land under tmp, not the repo
     proven = FakeGraph()          # confirmed, but no OPEN finding → no live patch
     judges = {
         "sql_injection": lambda h, p=None: ("VALIDATED", "boolean toggled",
@@ -191,6 +192,29 @@ def test_run_end_to_end_offline_is_tiered():
     assert by["xss"] == O.VERDICT_DISPROVED
     assert by["path_traversal"] == O.VERDICT_LEAD      # provable, un-wired here
     assert report.confirmed and report.confirmed[0].hypothesis.technique == "sql_injection"
+
+
+def test_run_writes_proof_carrying_report(tmp_path, monkeypatch):
+    """Stage 10 is wired: a completed run persists a markdown + json report whose
+    facts come only from the verdicts (LLM off → no narration seam)."""
+    monkeypatch.chdir(tmp_path)
+    judges = {
+        "sql_injection": lambda h, p=None: ("VALIDATED", "boolean toggled",
+                                            FakeEvidence(FakeGraph())),
+    }
+    A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+          _index=None, _judges=judges, use_llm=False)
+
+    reports = tmp_path / "reports"
+    mds = list(reports.glob("*.md"))
+    jsons = list(reports.glob("*.json"))
+    assert mds and jsons, "run() must persist a markdown + json report"
+    text = mds[0].read_text(encoding="utf-8")
+    assert "sql_injection" in text                     # the confirmed technique
+    assert "advisory narration" not in text.lower()    # LLM off → no narration section
+    import json as _json
+    data = _json.loads(jsons[0].read_text(encoding="utf-8"))
+    assert data["counts"]["confirmed"] >= 1
 
 
 def test_run_empty_target_prints_usage_and_returns_none():
