@@ -759,10 +759,10 @@ smart"* — maps onto the existing orchestrator as named stages. Every new stage
 | # | Stage | Status | What it adds |
 |---|-------|--------|--------------|
 | 1 | DISCOVER (recon) | ✅ exists | live recon → `Surface` |
-| 2 | SELECT ENDPOINTS | 🔨 new | rank/prune surface by injectability (params, reflection, auth) to focus budget |
+| 2 | SELECT ENDPOINTS | ✅ shipped | rank/prune surface by injectability (params, reflection, auth) to focus budget (`SENTINEL_ENDPOINT_BUDGET`; default = rank-only, full coverage) |
 | 3 | PLAN TESTS (hypothesize) | ✅ exists | rule floor + LLM breadth |
 | 4 | SELECT TOOLS | 🔨 new (§11) | technique→tool plan (proposers only) |
-| 5 | PLAN EXECUTION | 🔨 new | order, concurrency, budget; which judges + which approved tools |
+| 5 | PLAN EXECUTION | ✅ shipped | order, concurrency (`SENTINEL_MAX_WORKERS`), rounds; which judges + which approved tools — pure annotation, never a coverage gate |
 | 6 | EXECUTE | ✅ exists | `run_plan` + approval-gated tool runs |
 | 7 | ANALYSE RESULT | ✅ exists | tiered verdicts (CONFIRMED/DISPROVED/LEAD/INCONCLUSIVE) |
 | 8 | FAILURE-CAUSE + RETRY | 🔨 new | on INCONCLUSIVE/suspicious-DISPROVED, an advisory strategist proposes a *different* probe shape (encoding, location, anchor, tool-assist); bounded retries; **re-judged by the SAME pure judge** — never a verdict flip by the strategist |
@@ -827,7 +827,11 @@ approval-gated — "tool-wielding" now true)* → **live CI harness ✅** *(gate
 `tests/live/` tier + `docker-compose.yml` + `.github/workflows/live.yml`; the
 Juice Shop / VAmPI SQLi wins are now reproducible `VALIDATED`→`FIX_PROVEN`
 integration tests, deselected by default via `-m 'not live'`)* → endpoint-select
-(stage 2) + exec-plan (stage 5) + wire broken_auth/privesc judges into the
+(stage 2) ✅ + exec-plan (stage 5) ✅ *(both pure DATA: Stage 2 ranks/prunes the
+surface by injectability behind `SENTINEL_ENDPOINT_BUDGET` — default rank-only, full
+coverage; Stage 5 derives work slots + judge/lead assignment + real concurrency
+(`SENTINEL_MAX_WORKERS`) + rounds + in-scope proof-assist tools, never dropping a
+hypothesis)* → **NEXT:** wire broken_auth/privesc judges into the
 autonomous `_SPECS` → §12 KB deepening → Tier-B classes in the §7 phase style
 (command-injection & XXE first, reusing the SSRF OOB collaborator). Commit at
 each boundary on `sentinel-2` (no push). Every item obeys §1.

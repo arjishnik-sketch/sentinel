@@ -72,6 +72,35 @@ def test_build_plan_llm_lead_lands_in_lead_tier():
     assert "sql_injection" in {h.technique for h in plan.provable}  # rule floor intact
 
 
+# ---- Stage 2 SELECT ENDPOINTS wiring ----------------------------------------
+
+def test_build_plan_attaches_endpoint_selection_full_coverage():
+    plan = _param_plan()
+    sel = plan.endpoint_selection
+    assert sel is not None and sel.total >= 1
+    assert not sel.pruned                                   # no budget → full coverage
+    # every ranked endpoint is still on the surface (coverage unchanged)
+    assert len(plan.surface.endpoints) == sel.total
+
+
+def test_build_plan_endpoint_budget_prunes_to_top_injectable():
+    recon = _recon(["http://shop.test/item?id=1",
+                    "http://shop.test/static/page",
+                    "http://shop.test/api/users/1"])
+    full = O.build_plan(recon, _findings(), use_llm=False)
+    pruned = O.build_plan(recon, _findings(), use_llm=False, endpoint_budget=1)
+    assert pruned.endpoint_selection.pruned
+    assert len(pruned.surface.endpoints) == 1               # focused to the top endpoint
+    assert len(pruned.surface.endpoints) < len(full.surface.endpoints)
+    # provable-first ordering still holds on the pruned plan
+    seen_lead = False
+    for h in pruned.hypotheses:
+        if not h.provable:
+            seen_lead = True
+        elif seen_lead:
+            raise AssertionError("a provable hypothesis followed a lead after pruning")
+
+
 # ---- skill selection --------------------------------------------------------
 
 def test_select_skills_none_is_empty():

@@ -221,6 +221,45 @@ def test_run_empty_target_prints_usage_and_returns_none():
     assert A.run("") is None
 
 
+# ---- Stage 2 + Stage 5 wiring (offline) -------------------------------------
+
+def test_run_attaches_endpoint_selection_and_plans_execution(tmp_path, monkeypatch):
+    """A full offline run threads Stage 2 (endpoint selection on the plan) and
+    Stage 5 (execution shape) — the new panels render without raising."""
+    monkeypatch.chdir(tmp_path)
+    judges = {"sql_injection": lambda h, p=None: ("DISPROVED", "escaped", None)}
+    report = A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+                   _index=None, _judges=judges, use_llm=False)
+    assert isinstance(report, O.Report)
+    sel = report.plan.endpoint_selection
+    assert sel is not None and sel.total >= 1 and not sel.pruned
+
+
+def test_run_honors_endpoint_budget_env(tmp_path, monkeypatch):
+    """$SENTINEL_ENDPOINT_BUDGET focuses coverage on the top-N endpoints."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SENTINEL_ENDPOINT_BUDGET", "1")
+    recon = {"target": "http://shop.test",
+             "crawl": ["http://shop.test/item?id=1", "http://shop.test/plain"],
+             "alive": [{"tech": []}]}
+    findings = dict(FINDINGS)
+    report = A.run("http://shop.test", _recon=lambda t: (recon, findings),
+                   _index=None, _judges={}, use_llm=False)
+    assert report.plan.endpoint_selection.pruned
+    assert len(report.plan.surface.endpoints) == 1
+
+
+def test_run_with_tools_enabled_renders_execplan_tools(tmp_path, monkeypatch):
+    """With $SENTINEL_ENABLE_TOOLS on, the PLAN EXECUTION panel lists in-scope
+    proof-assist tools (data only; the injected no-op nominator runs no tool)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SENTINEL_ENABLE_TOOLS", "1")
+    report = A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+                   _index=None, _judges={}, _nominate=lambda plan, approve=None: [],
+                   use_llm=False)
+    assert isinstance(report, O.Report)   # tools-enabled panel branch renders cleanly
+
+
 # ---- NOMINATE end-to-end (tool proposes → augment_plan → judge disposes) -----
 
 def test_run_folds_tool_nomination_and_judge_confirms_it(tmp_path, monkeypatch):

@@ -296,6 +296,22 @@ $env:ANTHROPIC_API_KEY     = "sk-..."   # never commit this
 Keys are read from the environment or a `getpass` prompt, held in memory only, and
 never logged or written to disk.
 
+**Tuning the autonomous pipeline (optional).** Two operator knobs shape the run
+without ever weakening the contract — both default to *full coverage*:
+
+```bash
+$env:SENTINEL_ENDPOINT_BUDGET = "20"   # focus on the top-N most injectable endpoints
+$env:SENTINEL_MAX_WORKERS     = "4"    # cap probe concurrency (gentler on a fragile target)
+```
+
+`SENTINEL_ENDPOINT_BUDGET` caps how many endpoints the *SELECT ENDPOINTS* stage keeps
+after ranking them by injectability (params, resource ids, auth/api paths). Unset (or
+`≤0`) = **rank-only, no pruning** — every endpoint is kept, just best-first; any pruning
+is explicit and shown in the decision board. `SENTINEL_MAX_WORKERS` only *caps*
+parallelism in the *PLAN EXECUTION* stage (never below 1, never above the real slot
+count); it removes no work. Neither knob can confirm, drop, or manufacture a verdict —
+the pure judges still dispose every hypothesis.
+
 ### Windows troubleshooting
 
 | Symptom | Cause | Fix |

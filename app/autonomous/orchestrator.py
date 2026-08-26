@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 
 from . import hypotheses as HYP
 from . import session as SESSION
+from .endpoints import select_endpoints
 from .surface import Surface
 
 # Orchestrator verdict vocabulary (distinct from the judge's VALIDATED/DISPROVED).
@@ -49,6 +50,7 @@ class Plan:
     hypotheses: tuple = ()            # deduped, provable-first, deterministic order
     skills: tuple = ()               # selected KB skill cards
     session: SessionMap = None
+    endpoint_selection: object = None  # endpoints.EndpointSelection | None (Stage 2)
 
     @property
     def provable(self):
@@ -102,15 +104,26 @@ def _rank(hyps):
     )
 
 
-def build_plan(recon, findings, *, skills_index=None, use_llm=True, transport=None, max_hyps=64):
-    """DISCOVER+UNDERSTAND+HYPOTHESIZE: fold live recon into a Surface, select KB
-    skills, and merge the rule floor with qwen breadth into a ranked plan."""
+def build_plan(recon, findings, *, skills_index=None, use_llm=True, transport=None,
+               max_hyps=64, endpoint_budget=None):
+    """DISCOVER+SELECT-ENDPOINTS+UNDERSTAND+HYPOTHESIZE: fold live recon into a
+    Surface, rank (Stage 2) — and, only when ``endpoint_budget`` is set, prune —
+    the surface by injectability, select KB skills, then merge the rule floor with
+    qwen breadth into a ranked plan.
+
+    Endpoint ranking reorders which probes are posed first (so a ``max_hyps`` cap
+    keeps the most promising ones); with no budget, coverage is unchanged. The
+    :class:`~app.autonomous.endpoints.EndpointSelection` is attached to the Plan for
+    honest reporting of what was ranked and (if budgeted) what was pruned."""
     surface = Surface.from_recon(recon, findings)
+    selection = select_endpoints(surface, budget=endpoint_budget)
+    surface.endpoints = selection.endpoints  # best-first; pruned only if budgeted
     skills = select_skills(surface, skills_index)
     hyps = HYP.propose(
         surface, skill_cards=skills, use_llm=use_llm, transport=transport, max_hyps=max_hyps
     )
-    return Plan(surface=surface, hypotheses=_rank(hyps), skills=tuple(skills))
+    return Plan(surface=surface, hypotheses=_rank(hyps), skills=tuple(skills),
+                endpoint_selection=selection)
 
 
 def augment_plan(plan, extra_hypotheses):

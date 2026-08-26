@@ -3,11 +3,15 @@
 This is the fusion brain. One URL in, and Sentinel runs the whole loop itself:
 
     DISCOVER   live recon (subfinder/httpx/katana, builtin-crawler fallback)
+    SELECT ENDPOINTS  rank the surface by injectability; prune only if a budget is
+               set ($SENTINEL_ENDPOINT_BUDGET) — otherwise full coverage, reordered
     UNDERSTAND rank the 817-skill KB against the observed surface (breadth hints)
     HYPOTHESIZE qwen proposes techniques-at-places; a deterministic rule floor
                guarantees coverage even with the LLM entirely off
     NOMINATE   opt-in proof-assist tools (sqlmap…) run as PROPOSERS and widen the
                plan with source="tool" hypotheses (OFF unless $SENTINEL_ENABLE_TOOLS)
+    PLAN EXECUTION  derive the execution shape (judge/lead assignment, concurrency,
+               retry-round budget, in-scope tools) — annotation + knobs, never a gate
     EXECUTE    adjudicate every hypothesis CONCURRENTLY, then REFINE: a
                non-terminal (INCONCLUSIVE/ERROR) verdict is diagnosed and re-posed
                with a different probe shape and re-judged (bounded, deterministic);
@@ -83,6 +87,30 @@ def _refine_rounds() -> int:
         return max(1, int(raw)) if raw else 2
     except ValueError:
         return 2
+
+
+def _positive_env(name: str):
+    """Read a positive-int env knob, or ``None`` when unset / ≤0 / malformed."""
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        n = int(raw) if raw else 0
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def _endpoint_budget():
+    """Optional keep-count for Stage 2 SELECT ENDPOINTS. Unset/≤0 → rank-only (full
+    coverage). $SENTINEL_ENDPOINT_BUDGET focuses proof budget on the top-N most
+    injectable endpoints — an explicit, recorded prune, never a silent one."""
+    return _positive_env("SENTINEL_ENDPOINT_BUDGET")
+
+
+def _worker_budget():
+    """Optional concurrency ceiling for EXECUTE (Stage 5 PLAN EXECUTION). Unset/≤0 →
+    the built-in cap. $SENTINEL_MAX_WORKERS lets an operator be gentler on a fragile
+    target; it caps parallelism only, never coverage."""
+    return _positive_env("SENTINEL_MAX_WORKERS")
 
 
 # ---- NOMINATE stage (opt-in) — proof-assist tools widen the plan ------------
@@ -326,6 +354,74 @@ def _surface_panel(surface, recon) -> Panel:
     return Panel(
         grid, title=f"[{_C_OK}]▐ SURFACE[/{_C_OK}]",
         border_style=_C_OK, padding=(1, 2),
+    )
+
+
+def _endpoints_panel(selection) -> Panel:
+    """Stage 2 — the injectability ranking (and, if budgeted, what was pruned)."""
+    table = Table(show_header=True, header_style=f"bold {_C_OK}",
+                  border_style=_C_OK, expand=True)
+    table.add_column("#", width=3, justify="right", style=_C_DIM)
+    table.add_column("score", width=5, justify="right")
+    table.add_column("endpoint", ratio=3)
+    table.add_column("loc", width=6, style=_C_DIM)
+    table.add_column("why it ranks", ratio=3, style=_C_DIM)
+    kept = selection.kept
+    for i, s in enumerate(kept[:15], start=1):
+        ep = s.endpoint
+        table.add_row(str(i), str(s.score),
+                      _short(getattr(ep, "url", ""), 46),
+                      _short(getattr(ep, "location", "query"), 6),
+                      _short(", ".join(s.reasons) or "—", 44))
+    if selection.pruned:
+        note = Text(
+            f"\nranked {selection.total} endpoint(s); kept {len(kept)}, pruned "
+            f"{len(selection.dropped)} to the budget. Pruning focuses proof "
+            "budget — explicit + recorded here, never silent.",
+            style=_C_DIM)
+    else:
+        note = Text(
+            f"\nranked {selection.total} endpoint(s); full coverage (no budget). "
+            "Ranking only reorders which probes are posed first.",
+            style=_C_DIM)
+    return Panel(
+        Group(table, note),
+        title=f"[{_C_OK}]▐ SELECT ENDPOINTS · {len(kept)}/{selection.total}[/{_C_OK}]",
+        border_style=_C_OK, padding=(1, 2),
+    )
+
+
+def _execplan_panel(execplan) -> Panel:
+    """Stage 5 — the concrete execution shape: slots, concurrency, rounds, tools."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style=_C_DIM, justify="right")
+    grid.add_column(style="white")
+    grid.add_row("work slots", str(len(execplan.slots)))
+    grid.add_row("→ judged",
+                 f"[{_C_OK}]{len(execplan.judged)}[/{_C_OK}]  "
+                 f"[{_C_DIM}]{', '.join(execplan.techniques) or '—'}[/{_C_DIM}]")
+    grid.add_row("→ leads",
+                 f"[{_C_LEAD}]{len(execplan.leads) + len(execplan.unwired_leads)}"
+                 f"[/{_C_LEAD}]  "
+                 f"[{_C_DIM}]{len(execplan.unwired_leads)} provable-but-unwired"
+                 f"[/{_C_DIM}]")
+    grid.add_row("concurrency", f"{execplan.max_workers} worker(s)")
+    grid.add_row("retry rounds", str(execplan.max_rounds))
+    if execplan.tools_enabled:
+        grid.add_row("proof-assist tools",
+                     f"[{_C_ACCENT}]{', '.join(execplan.tools) or '—'}[/{_C_ACCENT}]")
+    else:
+        grid.add_row("proof-assist tools",
+                     f"[{_C_DIM}]disabled ($SENTINEL_ENABLE_TOOLS off)[/{_C_DIM}]")
+    note = Text(
+        "\nExecution shape only — every hypothesis keeps its slot. Concurrency and "
+        "rounds are knobs, not gates; the pure judges still dispose each probe.",
+        style=_C_DIM,
+    )
+    return Panel(
+        Group(grid, note),
+        title=f"[{_C_PRIMARY}]▐ PLAN EXECUTION[/{_C_PRIMARY}]",
+        border_style=_C_PRIMARY, padding=(1, 2),
     )
 
 
@@ -808,13 +904,18 @@ def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=
         from app.knowledge.skill_index import SkillIndex
         index = SkillIndex.load()
 
-    # HYPOTHESIZE — qwen proposes over a deterministic rule floor.
+    # HYPOTHESIZE — qwen proposes over a deterministic rule floor. Stage 2 SELECT
+    # ENDPOINTS runs inside build_plan: it ranks the surface by injectability and,
+    # only when $SENTINEL_ENDPOINT_BUDGET is set, prunes the tail (explicit, recorded).
     with console.status(
             f"[{_C_ACCENT}]fingerprinting surface + generating hypotheses…"
             f"[/{_C_ACCENT}]", spinner="dots"):
-        plan = O.build_plan(recon, findings, skills_index=index, use_llm=use_llm)
+        plan = O.build_plan(recon, findings, skills_index=index, use_llm=use_llm,
+                            endpoint_budget=_endpoint_budget())
 
     console.print(_surface_panel(plan.surface, recon))
+    if plan.endpoint_selection is not None and plan.endpoint_selection.total:
+        console.print(_endpoints_panel(plan.endpoint_selection))
     if plan.skills:
         console.print(_skills_panel(plan.skills))
     console.print(_hypotheses_panel(plan))
@@ -828,18 +929,41 @@ def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=
     if session_map is not None:
         console.print(_session_panel(session_map))
 
+    # PLAN EXECUTION (Stage 5) — derive the concrete execution shape from the final
+    # plan: work slots, judge/lead assignment, real concurrency, retry-round budget,
+    # and in-scope proof-assist tools. Pure annotation + knobs — never a coverage
+    # gate: every hypothesis keeps its slot; the pure judges still dispose each.
+    from app.autonomous import execplan as EXEC
+    rounds = _refine_rounds()
+    tools_on = _truthy_env("SENTINEL_ENABLE_TOOLS")
+    try:
+        from app.tools.selector import select_tools
+        tool_plan = select_tools(plan.surface, plan.hypotheses)
+        execplan = EXEC.plan_execution(
+            plan, wired_techniques=J.WIRED_TECHNIQUES, tool_plan=tool_plan,
+            tools_enabled=tools_on, max_workers=8, max_rounds=rounds,
+            budget=_worker_budget())
+        console.print()
+        console.print(Rule(f"[bold {_C_PRIMARY}]PLAN EXECUTION[/bold {_C_PRIMARY}]",
+                           style=_C_PRIMARY))
+        console.print(_execplan_panel(execplan))
+    except Exception:  # planning is annotation; a hiccup falls back to plain knobs
+        execplan = EXEC.plan_execution(
+            plan, wired_techniques=J.WIRED_TECHNIQUES, max_rounds=rounds,
+            budget=_worker_budget())
+
     # EXECUTE + PROVE — concurrent adjudication by the pure judges, with a bounded
     # FAILURE-CAUSE + RETRY loop: a non-terminal verdict is re-posed with a
     # different probe shape and re-judged (the judge still disposes each variant).
     judges = _judges if _judges is not None else J.default_judges()
-    rounds = _refine_rounds()
     console.print()
     console.print(Rule(f"[bold {_C_PRIMARY}]EXECUTE + PROVE[/bold {_C_PRIMARY}]",
                        style=_C_PRIMARY))
     with console.status(
             f"[{_C_PRIMARY}]adjudicating hypotheses concurrently — live "
             f"differential judges…[/{_C_PRIMARY}]", spinner="dots"):
-        verdicts = O.run_plan_adaptive(plan, judges, max_rounds=rounds)
+        verdicts = O.run_plan_adaptive(plan, judges, max_workers=execplan.max_workers,
+                                       max_rounds=execplan.max_rounds)
     console.print(_verdicts_panel(verdicts))
 
     # PATCH + PROVE — gated on the operator's approval.
