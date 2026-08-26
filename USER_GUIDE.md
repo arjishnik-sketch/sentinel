@@ -312,6 +312,49 @@ parallelism in the *PLAN EXECUTION* stage (never below 1, never above the real s
 count); it removes no work. Neither knob can confirm, drop, or manufacture a verdict —
 the pure judges still dispose every hypothesis.
 
+**Steering the run (you are a proposer, never a judge).** Between the plan and the
+`EXECUTE + PROVE` stage the loop pauses at an **OPERATOR STEER** checkpoint so you can
+add probes or hand it the auth context two matrix classes honestly need. Your steer is
+folded exactly like an LLM or tool proposal — via `augment_plan`, re-ranked provable-first
+— and the **same pure judge still disposes each one**. You can never confirm a finding.
+The prompt only appears on a real TTY; it is silent in CI / headless runs and when
+`$SENTINEL_ASSUME_YES` or `$SENTINEL_NO_STEER` is set. Non-interactively, pass the steer
+through the environment:
+
+```bash
+$env:SENTINEL_STEER = "test sqli /rest/products/search q query HIGH
+token eyJhbGciOi...             # a GENUINE captured bearer JWT (secret; never logged/echoed)
+matrix ./access_policy.json"    # broken_auth / privesc oracle
+$env:SENTINEL_NO_STEER = "1"    # force the checkpoint off even on a TTY
+```
+
+Steer grammar (one directive per line, verbs case-insensitive): `test <technique> <url|/path>
+[param] [location] [severity]` adds a scope-guarded hypothesis (off-host suggestions are
+reported as *ignored*, never probed); `token <bearer-jwt>` supplies a genuine session
+token; `matrix <path.json>` names a broken_auth/privesc oracle. A blank line / `go` / `done`
+ends interactive input.
+
+**AUTH MATRIX (broken_auth / privilege_escalation).** These two classes are *matrix-driven*,
+not single-probe, so they are deliberately absent from the wired single-probe judges and
+prove in a **separate stage after EXECUTE**, gated on the context you steer in:
+
+- **broken_auth** needs a forgery matrix (routes + strategy) **and a genuine bearer token**
+  to forge from. No token → **honestly skipped** (never a blind run that could manufacture a
+  claim). The token is bound as the sole `Authorization` header of the matrix principal,
+  held in memory only, and its value is **never logged, echoed, or placed in a note** — panels
+  report only *captured* / *NO token*.
+- **privilege_escalation** needs a ≥1-check matrix with declared principal headers, exactly
+  as `investigate` consumes it.
+
+Resolution precedence mirrors `investigate`: the dedicated `$SENTINEL_BROKEN_AUTH_POLICY` /
+`$SENTINEL_PRIVESC_POLICY`, then the steer's `matrix <path>`, then the combined
+`$SENTINEL_ACCESS_POLICY`; the token comes from the steer's `token` line or
+`$SENTINEL_SESSION_TOKEN`. The stage **owns no verdict** — it runs the *same* pure judges the
+`security_graph` classes already ship on a fresh graph and adapts each result through the
+single `VALIDATED→CONFIRMED` site. A matrix `CONFIRMED` joins the same verdict pool and renders
+with full steps-to-reproduce; because these two classes are not in the remediation registry,
+they render honestly **without** a `FIX_PROVEN` path.
+
 ### Windows troubleshooting
 
 | Symptom | Cause | Fix |

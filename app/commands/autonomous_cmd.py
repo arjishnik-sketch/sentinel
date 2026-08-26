@@ -673,6 +673,198 @@ def _session_panel(session_map) -> Panel:
     )
 
 
+# ---- OPERATOR STEER (checkpoint before EXECUTE) -----------------------------
+# The operator is a THIRD proposer, alongside the LLM and the proof-assist tools.
+# Before the judges run, we pause and let the operator type suggestions: new test
+# hypotheses (folded via orchestrator.augment_plan — the SAME pure judge still
+# disposes each) and/or auth context (a captured bearer token / a matrix path)
+# that lights up the broken_auth + privilege_escalation matrix stage. The operator
+# can NEVER confirm — a suggestion only earns the judge another honest measurement.
+# Auto-OFF when there is no TTY, in CI, or under $SENTINEL_ASSUME_YES; a
+# non-interactive $SENTINEL_STEER string steers headlessly. The token is a secret:
+# captured into the directive, held in memory, NEVER echoed here.
+
+_STEER_END = frozenset({"", "go", "done", "continue", "run", "proceed", "ok"})
+
+
+def _steer_enabled() -> bool:
+    """Interactive steering is opt-out-safe: silent in CI / headless / pre-approved
+    runs, and only prompts when a real TTY is attached."""
+    if _truthy_env("SENTINEL_ASSUME_YES") or _truthy_env("CI") or _truthy_env(
+            "SENTINEL_NO_STEER"):
+        return False
+    try:
+        import sys
+        return bool(sys.stdin and sys.stdin.isatty())
+    except Exception:
+        return False
+
+
+def _prompt_operator(surface) -> str:
+    """Read a short free-form steer from the operator (one directive per line,
+    ended by a blank line / go / done). Never blocks a headless run — the caller
+    only invokes this when a TTY is present."""
+    host = getattr(surface, "host", "") or "the target"
+    console.print(Panel(
+        Text.assemble(
+            ("steer Sentinel before it proves — you are a proposer, never a judge\n\n",
+             f"bold {_C_ACCENT}"),
+            (f"  test <technique> </path|url> [param] [loc] [sev]   add a probe (scoped to {host})\n",
+             _C_DIM),
+            ("  token <bearer-jwt>                                 genuine session token (secret)\n",
+             _C_DIM),
+            ("  matrix <path.json>                                 broken_auth / privesc oracle\n",
+             _C_DIM),
+            ("  (blank line | go | done)                           run\n", _C_DIM),
+        ),
+        title=f"[{_C_ACCENT}]▐ OPERATOR STEER[/{_C_ACCENT}]",
+        border_style=_C_ACCENT, padding=(1, 2)))
+    lines = []
+    while True:
+        try:
+            line = console.input(f"[{_C_ACCENT}]steer>[/{_C_ACCENT}] ")
+        except (EOFError, KeyboardInterrupt):
+            break
+        if line.strip().lower() in _STEER_END:
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _steer_panel(directive, *, folded) -> Panel:
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style=_C_DIM, justify="right")
+    grid.add_column(style="white")
+    grid.add_row("hypotheses folded",
+                 f"[{_C_OK}]{folded}[/{_C_OK}]" if folded else f"[{_C_DIM}]0[/{_C_DIM}]")
+    # A token is a secret — report only its PRESENCE, never its value.
+    grid.add_row("session token",
+                 f"[{_C_OK}]captured[/{_C_OK}]" if directive.token
+                 else f"[{_C_DIM}]—[/{_C_DIM}]")
+    grid.add_row("matrix path",
+                 f"[{_C_PRIMARY}]{_short(directive.matrix_path, 48)}[/{_C_PRIMARY}]"
+                 if directive.matrix_path else f"[{_C_DIM}]—[/{_C_DIM}]")
+    if directive.ignored:
+        grid.add_row("ignored",
+                     f"[{_C_WARN}]{_short('; '.join(directive.ignored), 60)}[/{_C_WARN}]")
+    note = Text(
+        "\nThe operator only PROPOSES — folded hypotheses are re-ranked into the "
+        "plan and the SAME pure judge disposes each. Auth context (token/matrix) "
+        "feeds the broken_auth/privesc stage; the token value is never echoed.",
+        style=_C_DIM)
+    return Panel(
+        Group(grid, note),
+        title=f"[{_C_ACCENT}]▐ OPERATOR STEER · {folded} FOLDED[/{_C_ACCENT}]",
+        border_style=_C_ACCENT, padding=(1, 2))
+
+
+def _operator_stage(plan, *, steer_text=None, prompt_fn=None, parse=None):
+    """Checkpoint before EXECUTE: gather an operator steer, fold its hypotheses into
+    the plan, and hand back the parsed directive (auth context for the matrix stage).
+    Returns ``(plan, directive_or_None)``. Never raises; auto-off when headless."""
+    from app.autonomous.steer import parse_operator_suggestion
+    parse = parse or parse_operator_suggestion
+
+    text = steer_text
+    if text is None:
+        text = os.environ.get("SENTINEL_STEER")
+    if text is None:
+        if prompt_fn is None and not _steer_enabled():
+            return plan, None
+        prompt_fn = prompt_fn or _prompt_operator
+        try:
+            text = prompt_fn(plan.surface)
+        except Exception:  # a prompt hiccup must never sink the loop
+            return plan, None
+    if not (text or "").strip():
+        return plan, None
+
+    directive = parse(text, plan.surface)
+    before = len(plan.hypotheses)
+    augmented = O.augment_plan(plan, directive.hypotheses) if directive.hypotheses else plan
+    folded = len(augmented.hypotheses) - before
+
+    if directive.is_empty and not directive.ignored:
+        return augmented, directive
+    console.print()
+    console.print(Rule(f"[bold {_C_ACCENT}]OPERATOR STEER (you propose)[/bold {_C_ACCENT}]",
+                       style=_C_ACCENT))
+    console.print(_steer_panel(directive, folded=folded))
+    return augmented, directive
+
+
+# ---- AUTH MATRIX (broken_auth / privilege_escalation, after EXECUTE) --------
+# These two classes are MATRIX-driven, not single-probe — deliberately absent from
+# the wired judges. They prove HERE, gated on operator-supplied context: broken_auth
+# needs a forgery matrix AND a genuine bearer token (no token → honestly skipped,
+# never a blind run); privesc needs a ≥1-check login matrix. The stage OWNS no
+# verdict — it runs the SAME pure judges the security_graph classes ship and adapts
+# each ProbeResult through the single VALIDATED→CONFIRMED site, carrying the proven
+# graph so the report renders full steps-to-reproduce, exactly like a wired class.
+
+def _authmatrix_panel(context, verdicts) -> Panel:
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style=_C_DIM, justify="right")
+    grid.add_column(style="white")
+    for note in context.notes or ("no broken_auth / privesc matrix supplied",):
+        grid.add_row("context", note)  # notes are token-SAFE (presence, never value)
+
+    counts = {}
+    for v in verdicts:
+        counts[v.status] = counts.get(v.status, 0) + 1
+    tally = "  ".join(
+        f"[{_VERDICT_STYLE.get(s, _C_DIM)}]{s} {counts[s]}[/{_VERDICT_STYLE.get(s, _C_DIM)}]"
+        for s in _VERDICT_ORDER if counts.get(s)) or f"[{_C_DIM}]no verdicts[/{_C_DIM}]"
+    note = Text(
+        "\nThe SAME pure judges that back the wired classes run here on a fresh "
+        "graph; the operator only supplies the matrix/token the class honestly "
+        "needs. broken_auth without a genuine token is skipped, never guessed.",
+        style=_C_DIM)
+    return Panel(
+        Group(grid, Text.from_markup(f"\n{tally}"), note),
+        title=f"[{_C_ACCENT}]▐ AUTH MATRIX · {len(verdicts)} VERDICT(S)[/{_C_ACCENT}]",
+        border_style=_C_ACCENT, padding=(1, 2))
+
+
+def _authmatrix_stage(target, directive, *, resolve=None, run_matrix=None):
+    """Resolve broken_auth/privesc context (operator directive + env) and, when it
+    is active, run the matrix judges and adapt their ProbeResults into Verdicts that
+    join the main pool. Returns a list of Verdicts (empty when no context). Never
+    raises: a judge fault degrades to a note, never a manufactured pass or a crash."""
+    from app.autonomous import authmatrix as AM
+    resolve = resolve or AM.resolve_auth_context
+    run_matrix = run_matrix or AM.run_auth_matrix
+
+    try:
+        context = resolve(directive)
+    except Exception:  # resolution is best-effort; a bad file must not sink the run
+        return []
+    if not context.active:
+        # Surface honest notes only when the operator DID supply context that
+        # resolved to nothing (e.g. a matrix that failed to load, token-but-no-matrix).
+        if context.notes:
+            console.print()
+            console.print(Rule(f"[bold {_C_ACCENT}]AUTH MATRIX[/bold {_C_ACCENT}]",
+                               style=_C_ACCENT))
+            console.print(_authmatrix_panel(context, []))
+        return []
+
+    console.print()
+    console.print(Rule(f"[bold {_C_ACCENT}]AUTH MATRIX (matrix classes prove)[/bold {_C_ACCENT}]",
+                       style=_C_ACCENT))
+    try:
+        with console.status(
+                f"[{_C_ACCENT}]running the broken_auth / privilege-escalation "
+                f"matrix judges live…[/{_C_ACCENT}]", spinner="dots"):
+            verdicts = list(run_matrix(target, context))
+    except Exception as exc:  # a genuinely broken judge → a note, never a crash
+        console.print(Text(
+            f"auth-matrix stage degraded ({_short(str(exc), 80)})", style=_C_WARN))
+        verdicts = []
+    console.print(_authmatrix_panel(context, verdicts))
+    return verdicts
+
+
 # ---- PATCH → PROVE (human deploy gate) --------------------------------------
 
 def _group_confirmed(verdicts):
@@ -845,6 +1037,13 @@ def _usage() -> Panel:
         ("  SENTINEL_SESSION_COOKIE   run the session-aware stage against a "
          "captured jar\n", _C_DIM),
         ("  SENTINEL_SESSION_URL      URL for the session stage (default: target)\n", _C_DIM),
+        ("  SENTINEL_STEER            non-interactive operator steer (test/token/"
+         "matrix lines)\n", _C_DIM),
+        ("  SENTINEL_NO_STEER=1       never prompt for an operator steer (headless)\n", _C_DIM),
+        ("  SENTINEL_SESSION_TOKEN    genuine bearer token for the broken_auth "
+         "matrix (secret)\n", _C_DIM),
+        ("  SENTINEL_BROKEN_AUTH_POLICY / SENTINEL_PRIVESC_POLICY / "
+         "SENTINEL_ACCESS_POLICY   matrix files\n", _C_DIM),
         ("  SENTINEL_ENABLE_TOOLS=1   run opt-in proof-assist tools (sqlmap…) as "
          "nominators\n", _C_DIM),
         ("  SENTINEL_ASSUME_YES=1     pre-approve the deploy gate + tool "
@@ -880,11 +1079,13 @@ def _provider_line(use_llm: bool) -> Text:
     )
 
 
-def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=True):
+def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None,
+        _steer=None, _authmatrix=None, use_llm=True):
     """`autonomous <target>` — the dynamic autonomous pentest loop.
 
-    Seams (`_recon`, `_index`, `_judges`, `_nominate`, `use_llm`) let the whole
-    command run offline in tests; live use takes their real defaults."""
+    Seams (`_recon`, `_index`, `_judges`, `_nominate`, `_steer`, `_authmatrix`,
+    `use_llm`) let the whole command run offline in tests; live use takes their
+    real defaults."""
     target = (arg or "").strip().split()[0] if (arg or "").strip() else ""
     if not target:
         console.print(_usage())
@@ -929,6 +1130,12 @@ def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=
     if session_map is not None:
         console.print(_session_panel(session_map))
 
+    # OPERATOR STEER — checkpoint before EXECUTE: the operator proposes extra probes
+    # (folded via augment_plan; the SAME pure judge disposes each) and/or auth
+    # context (token / matrix) that the AUTH MATRIX stage below consumes. Auto-off
+    # when headless; $SENTINEL_STEER steers non-interactively. Never echoes a token.
+    plan, directive = (_steer or _operator_stage)(plan)
+
     # PLAN EXECUTION (Stage 5) — derive the concrete execution shape from the final
     # plan: work slots, judge/lead assignment, real concurrency, retry-round budget,
     # and in-scope proof-assist tools. Pure annotation + knobs — never a coverage
@@ -962,8 +1169,15 @@ def run(arg, *, _recon=None, _index=None, _judges=None, _nominate=None, use_llm=
     with console.status(
             f"[{_C_PRIMARY}]adjudicating hypotheses concurrently — live "
             f"differential judges…[/{_C_PRIMARY}]", spinner="dots"):
-        verdicts = O.run_plan_adaptive(plan, judges, max_workers=execplan.max_workers,
-                                       max_rounds=execplan.max_rounds)
+        verdicts = list(O.run_plan_adaptive(plan, judges, max_workers=execplan.max_workers,
+                                            max_rounds=execplan.max_rounds))
+
+    # AUTH MATRIX — broken_auth / privilege_escalation prove from operator-supplied
+    # context (directive + env). Its verdicts join the SAME pool: the two classes
+    # confirm only when the matrix judges reproduce the differential, and they are
+    # not in the remediation registry, so they render honestly without a FIX_PROVEN.
+    verdicts += list((_authmatrix or _authmatrix_stage)(target, directive))
+
     console.print(_verdicts_panel(verdicts))
 
     # PATCH + PROVE — gated on the operator's approval.

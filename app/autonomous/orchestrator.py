@@ -37,6 +37,15 @@ _JUDGE_TO_VERDICT = {
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
+def to_verdict_status(judge_status: str) -> str:
+    """Translate a pure judge's word (VALIDATED/DISPROVED/INCONCLUSIVE) into the
+    orchestrator's verdict vocabulary — the SINGLE VALIDATED→CONFIRMED site. An
+    unknown status passes through unchanged. The auth-matrix stage reuses this so
+    a matrix-driven ProbeResult becomes a Verdict by the exact same rule a
+    single-probe judge does; no verdict is ever minted anywhere else."""
+    return _JUDGE_TO_VERDICT.get(judge_status, judge_status)
+
+
 @dataclass
 class SessionMap:
     """Output of the two session-aware behaviours (may both be absent)."""

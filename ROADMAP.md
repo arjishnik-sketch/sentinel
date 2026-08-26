@@ -763,8 +763,10 @@ smart"* — maps onto the existing orchestrator as named stages. Every new stage
 | 3 | PLAN TESTS (hypothesize) | ✅ exists | rule floor + LLM breadth |
 | 4 | SELECT TOOLS | 🔨 new (§11) | technique→tool plan (proposers only) |
 | 5 | PLAN EXECUTION | ✅ shipped | order, concurrency (`SENTINEL_MAX_WORKERS`), rounds; which judges + which approved tools — pure annotation, never a coverage gate |
+| 5b | OPERATOR STEER | ✅ shipped | checkpoint before EXECUTE: the operator is a THIRD proposer — folds `source="operator"` hypotheses via `augment_plan` (same pure judge disposes) + captures token/matrix auth context; silent headless, `SENTINEL_STEER` non-interactive, token value never echoed |
 | 6 | EXECUTE | ✅ exists | `run_plan` + approval-gated tool runs |
 | 7 | ANALYSE RESULT | ✅ exists | tiered verdicts (CONFIRMED/DISPROVED/LEAD/INCONCLUSIVE) |
+| 7b | AUTH MATRIX | ✅ shipped | `broken_auth` / `privilege_escalation` prove here (matrix-driven, not single-probe) gated on steered context — same pure `security_graph` judges on a fresh graph, adapted via the single `VALIDATED→CONFIRMED` site; no token in any note; no `FIX_PROVEN` (not in remediation registry) |
 | 8 | FAILURE-CAUSE + RETRY | 🔨 new | on INCONCLUSIVE/suspicious-DISPROVED, an advisory strategist proposes a *different* probe shape (encoding, location, anchor, tool-assist); bounded retries; **re-judged by the SAME pure judge** — never a verdict flip by the strategist |
 | 9 | SOLUTION ANALYSIS | ✅ exists | remediation synthesis + FIX_PROVEN flip |
 | 10 | REPORT | ✅ module shipped · 🔨 CLI-wire pending | per-finding: steps-to-reproduce (real probe requests), proofs (differential+anchor+judge reason+evidence), remediation (patch + proven flip), severity; markdown/JSON |
@@ -831,10 +833,24 @@ integration tests, deselected by default via `-m 'not live'`)* → endpoint-sele
 surface by injectability behind `SENTINEL_ENDPOINT_BUDGET` — default rank-only, full
 coverage; Stage 5 derives work slots + judge/lead assignment + real concurrency
 (`SENTINEL_MAX_WORKERS`) + rounds + in-scope proof-assist tools, never dropping a
-hypothesis)* → **NEXT:** wire broken_auth/privesc judges into the
-autonomous `_SPECS` → §12 KB deepening → Tier-B classes in the §7 phase style
-(command-injection & XXE first, reusing the SSRF OOB collaborator). Commit at
-each boundary on `sentinel-2` (no push). Every item obeys §1.
+hypothesis)* → **OPERATOR STEER + AUTH MATRIX ✅** *(the operator is now a THIRD
+proposer alongside the LLM and tools: a stage-checkpoint steer — silent in CI /
+headless, `$SENTINEL_STEER` non-interactively, `$SENTINEL_NO_STEER` to force off —
+folds `source="operator"` hypotheses via `augment_plan` and the SAME pure judge
+disposes each; it also captures the token/matrix the two matrix-driven classes
+honestly need. broken_auth / privilege_escalation now prove in `app/autonomous/
+authmatrix.py`, a separate stage after EXECUTE gated on that context: broken_auth
+needs a forgery matrix AND a genuine bearer token (no token → honestly skipped,
+never a blind run); privesc needs a ≥1-check login matrix. The stage owns no
+verdict — it runs the same pure `security_graph` judges on a fresh graph and adapts
+each ProbeResult through the single `VALIDATED→CONFIRMED` site, carrying the proven
+graph so the report renders full steps-to-reproduce. The token value is never
+logged, echoed, or noted. Not in the remediation registry → renders honestly
+without a `FIX_PROVEN`)* → **NEXT:** §12 KB deepening (PortSwigger-lab-driven) →
+Tier-B classes in the §7 phase style (command-injection & XXE first, reusing the
+SSRF OOB collaborator) → LAST: live background stdin listener
+(`$SENTINEL_LIVE_STEER`, isolated/experimental). Commit at each boundary on
+`sentinel-2` (no push). Every item obeys §1.
 
 ---
 

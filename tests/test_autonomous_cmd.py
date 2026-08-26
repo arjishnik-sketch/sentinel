@@ -304,3 +304,157 @@ def test_run_nominate_seam_faults_degrade_to_unaugmented_plan(tmp_path, monkeypa
 
     assert isinstance(report, O.Report)
     assert not any(h.source == "tool" for h in report.plan.hypotheses)
+
+
+# ---- OPERATOR STEER stage (the operator is a third proposer) ----------------
+
+from app.autonomous.steer import OperatorDirective   # noqa: E402
+
+
+def test_operator_stage_folds_hypotheses_and_captures_auth_context():
+    plan = O.build_plan(RECON, FINDINGS, use_llm=False)
+    steer = ("test sqli /login username body_json HIGH\n"
+             "token Bearer secret.jwt.value\n"
+             "matrix /tmp/matrix.json\n")
+    augmented, directive = A._operator_stage(plan, steer_text=steer)
+
+    assert directive.token == "secret.jwt.value"        # "Bearer " stripped
+    assert directive.matrix_path == "/tmp/matrix.json"
+    operator_hyps = [h for h in augmented.hypotheses if h.source == "operator"]
+    assert operator_hyps and operator_hyps[0].technique == "sql_injection"
+    assert operator_hyps[0].url == "http://shop.test/login"
+
+
+def test_operator_stage_never_echoes_the_token_value(capsys):
+    plan = O.build_plan(RECON, FINDINGS, use_llm=False)
+    A._operator_stage(plan, steer_text="token SUPER-SECRET-JWT\nmatrix /m.json")
+    out = capsys.readouterr().out
+    assert "SUPER-SECRET-JWT" not in out            # value never rendered
+    assert "captured" in out                        # presence reported
+
+
+def test_operator_stage_headless_is_a_noop(monkeypatch):
+    monkeypatch.delenv("SENTINEL_STEER", raising=False)
+    plan = O.build_plan(RECON, FINDINGS, use_llm=False)
+    # No steer_text, no env, no prompt_fn, and pytest stdin is not a TTY.
+    augmented, directive = A._operator_stage(plan)
+    assert augmented is plan and directive is None
+
+
+def test_operator_stage_reads_env_steer(monkeypatch):
+    monkeypatch.setenv("SENTINEL_STEER", "test xss /search q query")
+    plan = O.build_plan(RECON, FINDINGS, use_llm=False)
+    augmented, directive = A._operator_stage(plan)
+    assert any(h.source == "operator" and h.technique == "xss"
+               for h in augmented.hypotheses)
+
+
+def test_operator_stage_off_host_suggestion_is_ignored():
+    plan = O.build_plan(RECON, FINDINGS, use_llm=False)
+    _augmented, directive = A._operator_stage(
+        plan, steer_text="test sqli http://evil.test/x q")
+    assert not directive.hypotheses                 # scope-guarded away
+    assert directive.ignored                        # surfaced honestly, not folded
+
+
+# ---- AUTH MATRIX stage (matrix classes prove after EXECUTE) -----------------
+
+class _MatrixEvidence:
+    technique = "broken_auth"
+    target_base = "http://shop.test"
+    policy = None
+
+    def __init__(self):
+        self.graph = FakeGraph()
+        self.result = type("R", (), {"hypothesis_id": "ba-1", "status": "VALIDATED",
+                                     "reason": "forged token accepted"})()
+
+    @property
+    def status(self):
+        return self.result.status
+
+    @property
+    def reason(self):
+        return self.result.reason
+
+
+def _matrix_verdict():
+    return O.Verdict(Hypothesis("broken_auth", "http://shop.test/admin", "GET"),
+                     O.VERDICT_CONFIRMED, detail="forged token accepted",
+                     evidence=_MatrixEvidence())
+
+
+class _Ctx:
+    def __init__(self, *, active, notes=()):
+        self.active = active
+        self.notes = notes
+
+
+def test_authmatrix_stage_runs_active_context_and_returns_verdicts():
+    seen = {}
+
+    def resolve(directive):
+        seen["directive"] = directive
+        return _Ctx(active=True, notes=("broken_auth matrix: 1 check(s), token captured",))
+
+    def run_matrix(target, context):
+        seen["target"] = target
+        return [_matrix_verdict()]
+
+    verdicts = A._authmatrix_stage("http://shop.test", OperatorDirective(token="t"),
+                                   resolve=resolve, run_matrix=run_matrix)
+    assert len(verdicts) == 1 and verdicts[0].hypothesis.technique == "broken_auth"
+    assert seen["target"] == "http://shop.test"
+
+
+def test_authmatrix_stage_inactive_context_is_empty():
+    verdicts = A._authmatrix_stage(
+        "http://shop.test", None,
+        resolve=lambda d: _Ctx(active=False, notes=()), run_matrix=lambda t, c: [1])
+    assert verdicts == []
+
+
+def test_authmatrix_stage_judge_fault_degrades_to_empty():
+    def boom(target, context):
+        raise RuntimeError("judge exploded")
+
+    verdicts = A._authmatrix_stage(
+        "http://shop.test", OperatorDirective(token="t"),
+        resolve=lambda d: _Ctx(active=True, notes=("x",)), run_matrix=boom)
+    assert verdicts == []                           # a broken judge → note, never a crash
+
+
+def test_authmatrix_stage_never_echoes_token(capsys):
+    A._authmatrix_stage(
+        "http://shop.test", OperatorDirective(token="LEAK-ME"),
+        resolve=lambda d: _Ctx(active=True, notes=("token captured",)),
+        run_matrix=lambda t, c: [_matrix_verdict()])
+    assert "LEAK-ME" not in capsys.readouterr().out
+
+
+# ---- run() wiring: steer folds + matrix verdicts join the pool --------------
+
+def test_run_threads_operator_steer_and_auth_matrix(tmp_path, monkeypatch):
+    """The full run wires both new stages: the operator directive is captured before
+    EXECUTE, and the AUTH MATRIX verdicts join the same verdict pool for the report."""
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    def steer(plan):
+        captured["planned"] = True
+        return plan, OperatorDirective(token="tok", matrix_path="/m.json")
+
+    def authmatrix(target, directive):
+        captured["target"] = target
+        captured["directive"] = directive
+        return [_matrix_verdict()]
+
+    report = A.run("http://shop.test", _recon=lambda t: (RECON, FINDINGS),
+                   _index=None, _judges={}, _steer=steer, _authmatrix=authmatrix,
+                   use_llm=False)
+
+    assert captured["planned"] and captured["target"] == "http://shop.test"
+    assert captured["directive"].token == "tok"
+    techniques = {v.hypothesis.technique for v in report.verdicts}
+    assert "broken_auth" in techniques              # matrix verdict joined the pool
+
