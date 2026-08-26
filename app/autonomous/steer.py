@@ -19,6 +19,9 @@ Grammar (one directive per line, verbs case-insensitive):
     test <technique> <url|/path> [param] [location] [severity]   add a hypothesis
     <technique> <url|/path> [param] ...                          (bare, verb optional)
     token <bearer-jwt>                                           genuine session token
+    login <username> <password> [login-url]                      credentials to CAPTURE a token
+    creds <username>:<password>                                  same, colon form
+    login_url <url>                                              where the login form lives
     matrix <path-to-matrix.json>                                 broken_auth/privesc oracle
     # …                                                          comment (ignored)
     (blank | go | done | continue)                               end of input (caller)
@@ -51,6 +54,12 @@ _LOCATIONS = frozenset({"query", "body", "body_form", "body_json", "json",
                         "path", "header", "cookie"})
 _SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
 
+# Verbs that introduce login CREDENTIALS (username + password, to CAPTURE a token
+# live) and, separately, the login URL. Credentials are a secret in the same class
+# as the token: the parser never logs them, and the CLI reports only presence.
+_CRED_VERBS = frozenset({"login", "creds", "credentials", "signin", "sign-in"})
+_URL_VERBS = frozenset({"login_url", "loginurl", "login-url"})
+
 # Lines the caller treats as "operator is done" — never a hypothesis.
 _CONTINUE_WORDS = frozenset({"", "go", "done", "continue", "run", "proceed", "ok"})
 
@@ -62,22 +71,29 @@ class OperatorDirective:
     ``hypotheses`` are already scope-guarded ``source="operator"`` proposals ready
     to hand to :func:`orchestrator.augment_plan`. ``token`` / ``matrix_path`` are
     optional auth context for a downstream broken_auth/privesc matrix stage — the
-    token is a secret and MUST never be logged or echoed. ``ignored`` holds the raw
+    token is a secret and MUST never be logged or echoed. ``credentials`` (a
+    ``(username, password)`` pair) and ``login_url`` let Sentinel CAPTURE that token
+    itself by driving a live login — the password is a secret in the same class as
+    the token and is likewise never logged or echoed. ``ignored`` holds the raw
     lines we could not turn into any of the above, so the CLI can report them
     transparently instead of silently dropping operator intent."""
 
     hypotheses: tuple = ()
     token: "str | None" = None
     matrix_path: "str | None" = None
+    credentials: "tuple | None" = None      # (username, password) — password secret
+    login_url: "str | None" = None
     ignored: tuple = ()
 
     @property
     def is_empty(self) -> bool:
-        return not (self.hypotheses or self.token or self.matrix_path)
+        return not (self.hypotheses or self.token or self.matrix_path
+                    or self.credentials or self.login_url)
 
     @property
     def has_auth_context(self) -> bool:
-        return bool(self.token or self.matrix_path)
+        return bool(self.token or self.matrix_path or self.credentials
+                    or self.login_url)
 
 
 def _canonical_technique(tok: str) -> "str | None":
@@ -155,6 +171,49 @@ def _parse_hypothesis_line(tokens, surface) -> "Hypothesis | None":
         source="operator")
 
 
+def _looks_like_url(tok: str) -> bool:
+    """A trailing credential token that names a login endpoint, not a password —
+    a full URL (``scheme://…``) or a bare ``/path``. Deliberately narrow so a
+    password like ``p@ss/word`` is never mistaken for a URL."""
+    t = (tok or "").strip()
+    return "://" in t or t.startswith("/")
+
+
+def _parse_credentials(rest) -> "tuple":
+    """``login``/``creds`` args → ``((username, password), login_url|None)``.
+
+    Accepts the colon form ``user:pass`` (a single token, split on the FIRST
+    colon so a password may contain more) or the space form ``user pass``. A
+    trailing URL-looking token (``https://…`` or ``/login``) becomes the login
+    URL. Returns ``(None, None)`` when no username+password can be formed — an
+    honest miss the caller lands in ``ignored``, never a crash. The password is a
+    secret: this parser only structures it, never logs it."""
+    rest = list(rest)
+    if not rest:
+        return (None, None)
+
+    first = rest[0]
+    if ":" in first and "://" not in first:
+        username, _, password = first.partition(":")
+        username, password = username.strip(), password.strip()
+        remainder = rest[1:]
+    else:
+        if len(rest) < 2:
+            return (None, None)
+        username, password = first.strip(), rest[1].strip()
+        remainder = rest[2:]
+
+    if not username or not password:
+        return (None, None)
+
+    login_url = None
+    for tok in remainder:
+        if _looks_like_url(tok):
+            login_url = tok.strip().strip('"').strip("'")
+            break
+    return ((username, password), login_url)
+
+
 def parse_operator_suggestion(text: str, surface) -> OperatorDirective:
     """Parse free-form operator steer text into an :class:`OperatorDirective`.
 
@@ -165,6 +224,8 @@ def parse_operator_suggestion(text: str, surface) -> OperatorDirective:
     seen: set = set()
     token: "str | None" = None
     matrix_path: "str | None" = None
+    credentials: "tuple | None" = None
+    login_url: "str | None" = None
     ignored: list = []
 
     for raw_line in (text or "").splitlines():
@@ -184,6 +245,20 @@ def parse_operator_suggestion(text: str, surface) -> OperatorDirective:
         if verb == "matrix" and len(tokens) >= 2:
             matrix_path = line.split(None, 1)[1].strip().strip('"').strip("'")
             continue
+        if verb in _URL_VERBS and len(tokens) >= 2:
+            login_url = line.split(None, 1)[1].strip().strip('"').strip("'")
+            continue
+        if verb in _CRED_VERBS:
+            creds, maybe_url = _parse_credentials(tokens[1:])
+            if creds is None:
+                ignored.append(line)
+                continue
+            # The password is a secret in the same class as the token — held in
+            # memory only, NEVER logged or echoed.
+            credentials = creds
+            if maybe_url and not login_url:
+                login_url = maybe_url
+            continue
 
         hyp = _parse_hypothesis_line(tokens, surface)
         if hyp is None:
@@ -196,4 +271,4 @@ def parse_operator_suggestion(text: str, surface) -> OperatorDirective:
 
     return OperatorDirective(
         hypotheses=tuple(hyps), token=token, matrix_path=matrix_path,
-        ignored=tuple(ignored))
+        credentials=credentials, login_url=login_url, ignored=tuple(ignored))

@@ -432,6 +432,34 @@ def test_authmatrix_stage_never_echoes_token(capsys):
     assert "LEAK-ME" not in capsys.readouterr().out
 
 
+def test_authmatrix_stage_passes_target_to_real_resolver(monkeypatch):
+    """The real resolver (no injected seam) must receive ``target`` so it can
+    CAPTURE a token via a live credential login. Injected test seams keep the
+    one-positional-arg contract, so target is threaded ONLY to the real default."""
+    from app.autonomous import authmatrix as AM
+    seen = {}
+
+    def fake_resolve(directive, *, target=None, **kw):
+        seen["target"] = target
+        return _Ctx(active=False, notes=())
+
+    monkeypatch.setattr(AM, "resolve_auth_context", fake_resolve)
+    A._authmatrix_stage("http://shop.test", OperatorDirective(credentials=("w", "p")))
+    assert seen["target"] == "http://shop.test"
+
+
+def test_steer_panel_reports_creds_presence_never_password():
+    from rich.console import Console
+
+    directive = OperatorDirective(credentials=("wiener", "s3cr3t-pw"),
+                                  login_url="http://shop.test/login")
+    panel = A._steer_panel(directive, folded=0)
+    rendered = "".join(
+        seg.text for seg in Console().render(panel, Console().options))
+    assert "supplied" in rendered and "wiener" in rendered
+    assert "s3cr3t-pw" not in rendered      # the password value never renders
+
+
 # ---- run() wiring: steer folds + matrix verdicts join the pool --------------
 
 def test_run_threads_operator_steer_and_auth_matrix(tmp_path, monkeypatch):

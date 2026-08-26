@@ -53,7 +53,9 @@ from .broken_auth_policy import (
     BrokenAuthCheck,
     BrokenAuthPolicy,
     BrokenAuthPrincipal,
+    ControlRoute,
     GUARD_PROVABLE_STRATEGIES,
+    TokenLocation,
     load_broken_auth_policy,
     parse_broken_auth_policy,
 )
@@ -93,6 +95,8 @@ __all__ = [
     "BrokenAuthCheck",
     "BrokenAuthPolicy",
     "BrokenAuthPrincipal",
+    "ControlRoute",
+    "TokenLocation",
     "GUARD_PROVABLE_STRATEGIES",
     "load_broken_auth_policy",
     "parse_broken_auth_policy",

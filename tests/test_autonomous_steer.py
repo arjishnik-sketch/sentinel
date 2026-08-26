@@ -60,6 +60,50 @@ def test_matrix_line_captures_path_unquoted():
     assert d.has_auth_context
 
 
+# ---- credential capture (Sentinel logs in itself) ---------------------------
+
+def test_login_line_space_form_captures_creds_and_url():
+    d = ST.parse_operator_suggestion(
+        "login wiener peter http://shop.test/login", _surface())
+    assert d.credentials == ("wiener", "peter")
+    assert d.login_url == "http://shop.test/login"
+    assert d.hypotheses == ()          # creds are auth context, not a hypothesis
+    assert d.has_auth_context and not d.is_empty
+
+
+def test_login_line_without_url_leaves_url_none():
+    d = ST.parse_operator_suggestion("login wiener peter", _surface())
+    assert d.credentials == ("wiener", "peter") and d.login_url is None
+    assert d.has_auth_context
+
+
+def test_creds_colon_form_splits_on_first_colon():
+    d = ST.parse_operator_suggestion("creds wiener:p@ss:word", _surface())
+    # split on the FIRST colon only, so a password may itself contain one
+    assert d.credentials == ("wiener", "p@ss:word")
+
+
+def test_login_colon_form_with_trailing_url():
+    d = ST.parse_operator_suggestion(
+        "login wiener:peter /auth/login", _surface("http://shop.test"))
+    assert d.credentials == ("wiener", "peter")
+    assert d.login_url == "/auth/login"   # a bare /path is a URL-looking token
+
+
+def test_login_url_line_sets_url_independently():
+    text = "login_url http://shop.test/session\nlogin wiener peter"
+    d = ST.parse_operator_suggestion(text, _surface())
+    # a dedicated login_url line wins; the later creds line does not overwrite it
+    assert d.login_url == "http://shop.test/session"
+    assert d.credentials == ("wiener", "peter")
+
+
+def test_login_line_missing_password_is_ignored_not_crash():
+    d = ST.parse_operator_suggestion("login wiener", _surface())
+    assert d.credentials is None
+    assert d.ignored == ("login wiener",)
+
+
 def test_comments_blank_and_continue_words_are_skipped():
     text = "\n# a note\n\ngo\ndone\ncontinue\n"
     d = ST.parse_operator_suggestion(text, _surface())

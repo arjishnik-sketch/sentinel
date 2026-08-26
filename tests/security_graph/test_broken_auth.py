@@ -269,6 +269,87 @@ def test_forgery_from_non_jwt_is_never_derivable():
         assert derive_forgery("opaque-session-id", strategy).token is None
 
 
+# --- forge_claims: operator-declared payload override (vertical escalation) --
+
+def _payload_of(token: str):
+    parts = decode_jwt(token)
+    return parts.payload if parts is not None else None
+
+
+def test_forge_claims_override_escalates_sub_and_keeps_other_claims():
+    # The genuine token is sub=user-7; an operator declaring forge_claims escalates
+    # the forged token's sub to "administrator" (the vertical target) while every
+    # other genuine claim rides along and the benign marker is still added.
+    result = derive_forgery(
+        GENUINE, "alg_none", claims=(("sub", "administrator"),)
+    )
+    payload = _payload_of(result.token)
+    assert payload["sub"] == "administrator"   # escalated
+    assert payload["role"] == "user"           # untouched genuine claim
+    assert payload["sentinel_forge"] == "sentinel"
+
+
+def test_forge_claims_absent_leaves_payload_identity_unchanged():
+    # No override -> the forged payload keeps the genuine identity verbatim (only
+    # marked). This is what makes the escalation an explicit operator declaration,
+    # never an implicit behaviour of the forge.
+    plain = _payload_of(derive_forgery(GENUINE, "alg_none").token)
+    assert plain["sub"] == "user-7"
+    assert "administrator" not in json.dumps(plain)
+
+
+def test_forge_claims_apply_across_every_strategy():
+    claims = (("sub", "administrator"),)
+    for token in (
+        derive_forgery(GENUINE, "alg_none", claims=claims).token,
+        derive_forgery(GENUINE, "unsigned", claims=claims).token,
+        derive_forgery(GENUINE, "hs256_confusion", public_key=PUBLIC_KEY,
+                       claims=claims).token,
+        derive_forgery(GENUINE, "weak_secret",
+                       secret_candidates=(WEAK_SECRET,), claims=claims).token,
+    ):
+        assert _payload_of(token)["sub"] == "administrator"
+
+
+def test_parse_reads_forge_claims_as_declared_scalars():
+    policy = parse_broken_auth_policy(
+        {
+            "broken_auth_matrix": {
+                "principal": {"name": "wiener",
+                              "headers": [["Authorization", f"Bearer {GENUINE}"]]},
+                "checks": [
+                    {
+                        "forgery": "alg_none",
+                        "route": {"method": "GET", "path": "/admin"},
+                        "forge_claims": {"sub": "administrator", "iss": "portswigger"},
+                    }
+                ],
+            }
+        }
+    )
+    assert policy.checks[0].forge_claims == (
+        ("sub", "administrator"), ("iss", "portswigger"))
+
+
+def test_parse_rejects_non_scalar_forge_claim_value():
+    with pytest.raises(ValueError):
+        parse_broken_auth_policy(
+            {
+                "broken_auth_matrix": {
+                    "principal": {"name": "wiener"},
+                    "checks": [
+                        {
+                            "forgery": "alg_none",
+                            "route": {"path": "/admin"},
+                            "forge_claims": {"sub": {"nested": "object"}},
+                        }
+                    ],
+                }
+            }
+        )
+
+
+
 # --- parse ------------------------------------------------------------------
 
 def test_parse_reads_principal_and_check():

@@ -331,29 +331,42 @@ $env:SENTINEL_NO_STEER = "1"    # force the checkpoint off even on a TTY
 Steer grammar (one directive per line, verbs case-insensitive): `test <technique> <url|/path>
 [param] [location] [severity]` adds a scope-guarded hypothesis (off-host suggestions are
 reported as *ignored*, never probed); `token <bearer-jwt>` supplies a genuine session
-token; `matrix <path.json>` names a broken_auth/privesc oracle. A blank line / `go` / `done`
-ends interactive input.
+token; `login <user> <pass> [login-url]` (or `creds <user>:<pass>`) hands Sentinel credentials
+so it **logs in and captures the token itself** — no external driver; `login_url <url>` names
+the login page; `matrix <path.json>` names a broken_auth/privesc oracle. A blank line / `go` /
+`done` ends interactive input. Credentials and the captured token are secrets — held in memory
+for the run only, **never logged, echoed, or written to disk** (the username, an identity, may
+appear in a note; the password and token value never do).
 
 **AUTH MATRIX (broken_auth / privilege_escalation).** These two classes are *matrix-driven*,
 not single-probe, so they are deliberately absent from the wired single-probe judges and
 prove in a **separate stage after EXECUTE**, gated on the context you steer in:
 
-- **broken_auth** needs a forgery matrix (routes + strategy) **and a genuine bearer token**
-  to forge from. No token → **honestly skipped** (never a blind run that could manufacture a
-  claim). The token is bound as the sole `Authorization` header of the matrix principal,
-  held in memory only, and its value is **never logged, echoed, or placed in a note** — panels
-  report only *captured* / *NO token*.
+- **broken_auth** needs a forgery matrix (routes + strategy) **and a genuine session token**
+  to forge from. You can hand one in (`token <jwt>` / `$SENTINEL_SESSION_TOKEN`) **or give
+  Sentinel credentials and let it capture one itself**: with `login <user> <pass> [url]` (or
+  `$SENTINEL_LOGIN_USERNAME` / `$SENTINEL_LOGIN_PASSWORD` / `$SENTINEL_LOGIN_URL`) Sentinel
+  drives a headless HTTP form login, reads the session token from the **same location the
+  matrix declares** (`token_location` — an `Authorization` header or a `session` cookie), and
+  binds it as the sole authenticator. No token (and no working login) → **honestly skipped**
+  (never a blind run that could manufacture a claim). The token is held in memory only and its
+  value is **never logged, echoed, or placed in a note** — panels report only *captured* / *NO
+  token*. For a **vertical** bypass a check may declare `forge_claims` (e.g.
+  `{"sub": "administrator"}`) — the escalation target baked into the forged payload as operator
+  ground truth; the pure judge still disposes the live three-probe differential, so a declared
+  claim never fabricates a finding.
 - **privilege_escalation** needs a ≥1-check matrix with declared principal headers, exactly
   as `investigate` consumes it.
 
 Resolution precedence mirrors `investigate`: the dedicated `$SENTINEL_BROKEN_AUTH_POLICY` /
 `$SENTINEL_PRIVESC_POLICY`, then the steer's `matrix <path>`, then the combined
 `$SENTINEL_ACCESS_POLICY`; the token comes from the steer's `token` line or
-`$SENTINEL_SESSION_TOKEN`. The stage **owns no verdict** — it runs the *same* pure judges the
-`security_graph` classes already ship on a fresh graph and adapts each result through the
-single `VALIDATED→CONFIRMED` site. A matrix `CONFIRMED` joins the same verdict pool and renders
-with full steps-to-reproduce; because these two classes are not in the remediation registry,
-they render honestly **without** a `FIX_PROVEN` path.
+`$SENTINEL_SESSION_TOKEN`, and **failing that**, from a live credential login when a
+broken_auth matrix is present and credentials were supplied (an explicit token always wins, so
+a live login is never driven needlessly). The stage **owns no verdict** — it runs the *same*
+pure judges the `security_graph` classes already ship on a fresh graph and adapts each result
+through the single `VALIDATED→CONFIRMED` site. A matrix `CONFIRMED` joins the same verdict pool
+and renders with full steps-to-reproduce.
 
 ### Windows troubleshooting
 

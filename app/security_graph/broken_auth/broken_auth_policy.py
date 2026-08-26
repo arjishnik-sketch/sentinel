@@ -38,7 +38,7 @@ An empty matrix is legal — it simply means "no broken-auth pass requested".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,62 @@ _DEFAULT_SUCCESS_STATUSES = tuple(range(200, 300))
 
 
 @dataclass(frozen=True)
+class TokenLocation:
+    """Where the app carries the session token — so control/breach probes ride it
+    in the SAME place the real client does.
+
+    ``kind == "header"`` (default) sends ``<name>: <scheme> <token>`` (the classic
+    ``Authorization: Bearer <jwt>``). ``kind == "cookie"`` sends
+    ``Cookie: <name>=<token>`` — the shape most PortSwigger JWT labs and real SPAs
+    actually use. The location is declared ground truth (never a secret); only the
+    token value itself is sensitive. Default preserves the historical behaviour.
+    """
+
+    kind: str = "header"                 # "header" | "cookie"
+    name: str = "Authorization"          # header name, or cookie name
+    scheme: str = "Bearer"               # header value prefix; ignored for cookie
+
+    def header_for(self, token: str) -> tuple[str, str]:
+        """The single request header that carries ``token`` in this location."""
+        if self.kind == "cookie":
+            return ("Cookie", f"{self.name}={token}")
+        prefix = f"{self.scheme} " if self.scheme else ""
+        return (self.name, f"{prefix}{token}")
+
+    def extract(self, headers: tuple[tuple[str, str], ...]) -> str:
+        """The bare token from a principal's declared headers, or ``""``.
+
+        Mirrors :meth:`header_for` in reverse so a live-captured session (however
+        it carries the token) is read from the SAME location the probes will use.
+        """
+        for name, value in headers:
+            if self.kind == "cookie" and name.lower() == "cookie":
+                for part in value.split(";"):
+                    key, sep, val = part.strip().partition("=")
+                    if sep and key == self.name:
+                        return val.strip()
+            elif self.kind != "cookie" and name.lower() == self.name.lower():
+                text = value.strip()
+                prefix = f"{self.scheme} "
+                if self.scheme and text.lower().startswith(prefix.lower()):
+                    return text[len(prefix):].strip()
+                return text
+        return ""
+
+
+@dataclass(frozen=True)
+class ControlRoute:
+    """A route the GENUINE principal legitimately reaches — the session-alive
+    control probe. For a VERTICAL forgery (a plain user forges an admin token) the
+    genuine token is DENIED at the breach route, so the control must prove the
+    session is live against a route the principal really owns (e.g. ``/my-account``)
+    rather than the protected route itself."""
+
+    method: str = "GET"
+    path: str = ""
+
+
+@dataclass(frozen=True)
 class BrokenAuthPrincipal:
     """
     The one authenticated account whose genuine token is forged FROM.
@@ -79,6 +135,7 @@ class BrokenAuthPrincipal:
     name: str
     headers: tuple[tuple[str, str], ...] = ()
     role: str = "user"
+    control: "ControlRoute | None" = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +146,11 @@ class BrokenAuthCheck:
     `forgery` selects the derivation attempted against the genuine token.
     `public_key` / `secret_candidates` carry the (operator-supplied) material a
     signed-forgery strategy needs; the pure/guard-provable strategies need none.
+    `forge_claims` are operator-declared JWT payload overrides baked into the
+    forged token — the escalation target (e.g. ``{"sub": "administrator"}``) for a
+    VERTICAL bypass where the genuine principal is denied at the breach route.
+    They are declared ground truth (never a secret); the pure judge still disposes
+    the live differential, so a declared claim never fabricates a finding.
     """
 
     forgery: str
@@ -97,6 +159,7 @@ class BrokenAuthCheck:
     severity: str = "HIGH"
     public_key: str = ""
     secret_candidates: tuple[str, ...] = ()
+    forge_claims: tuple[tuple[str, Any], ...] = ()
     rationale: str = ""
 
 
@@ -105,6 +168,7 @@ class BrokenAuthPolicy:
     principal: "BrokenAuthPrincipal | None" = None
     checks: tuple[BrokenAuthCheck, ...] = ()
     success_statuses: tuple[int, ...] = _DEFAULT_SUCCESS_STATUSES
+    token_location: TokenLocation = field(default_factory=TokenLocation)
 
 
 def _as_str(value: Any, field_name: str) -> str:
@@ -140,6 +204,36 @@ def _parse_headers(payload: Any, field_name: str) -> tuple[tuple[str, str], ...]
     return tuple(pairs)
 
 
+def _parse_route(payload: Any, field_name: str) -> ControlRoute | None:
+    """Parse an optional ``{method, path}`` route object (used by ``control``)."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError(f"broken-auth matrix: '{field_name}' must be an object.")
+    method = _as_str(payload.get("method", "GET"), f"{field_name}.method").upper()
+    path = _as_str(payload.get("path"), f"{field_name}.path")
+    return ControlRoute(method=method, path=path)
+
+
+def _parse_token_location(payload: Any) -> TokenLocation:
+    """Parse an optional ``token_location`` object; default = Authorization Bearer."""
+    if payload is None:
+        return TokenLocation()
+    if not isinstance(payload, dict):
+        raise ValueError("broken-auth matrix: 'token_location' must be an object.")
+    kind = _as_str(payload.get("kind", "header"), "token_location.kind").lower()
+    if kind not in ("header", "cookie"):
+        raise ValueError(
+            "broken-auth matrix: 'token_location.kind' must be 'header' or "
+            f"'cookie', got {kind!r}."
+        )
+    default_name = "session" if kind == "cookie" else "Authorization"
+    name = _as_str(payload.get("name", default_name), "token_location.name")
+    scheme = payload.get("scheme", "" if kind == "cookie" else "Bearer")
+    scheme = scheme if isinstance(scheme, str) else ""
+    return TokenLocation(kind=kind, name=name, scheme=scheme)
+
+
 def _parse_principal(payload: Any) -> BrokenAuthPrincipal | None:
     if payload is None:
         return None
@@ -149,7 +243,8 @@ def _parse_principal(payload: Any) -> BrokenAuthPrincipal | None:
     headers = _parse_headers(payload.get("headers"), "principal.headers")
     role = payload.get("role", "user")
     role = _as_str(role, "principal.role") if role else "user"
-    return BrokenAuthPrincipal(name=name, headers=headers, role=role)
+    control = _parse_route(payload.get("control"), "principal.control")
+    return BrokenAuthPrincipal(name=name, headers=headers, role=role, control=control)
 
 
 def _parse_secret_candidates(payload: Any) -> tuple[str, ...]:
@@ -166,6 +261,38 @@ def _parse_secret_candidates(payload: Any) -> tuple[str, ...]:
                 "broken-auth matrix: each secret candidate must be a string."
             )
         out.append(item)
+    return tuple(out)
+
+
+def _parse_forge_claims(payload: Any) -> tuple[tuple[str, Any], ...]:
+    """Parse the optional ``forge_claims`` payload-override object.
+
+    Maps JWT payload claim names to the values baked into the forged token — the
+    operator-declared escalation target (e.g. ``{"sub": "administrator"}``). Values
+    are constrained to JSON scalars so the resulting check stays hashable/frozen;
+    ordering follows the declaration. An absent block yields ``()`` (the forged
+    token then keeps the genuine payload verbatim, only marked).
+    """
+    if payload is None:
+        return ()
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "broken-auth matrix: 'forge_claims' must be an object mapping JWT "
+            "payload claim names to their forged values."
+        )
+    out: list[tuple[str, Any]] = []
+    for key, value in payload.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(
+                "broken-auth matrix: each 'forge_claims' key must be a non-empty "
+                "string."
+            )
+        if value is not None and not isinstance(value, (str, int, float, bool)):
+            raise ValueError(
+                "broken-auth matrix: each 'forge_claims' value must be a JSON "
+                "scalar (string, number, boolean, or null)."
+            )
+        out.append((key.strip(), value))
     return tuple(out)
 
 
@@ -201,6 +328,8 @@ def _parse_check(payload: Any) -> BrokenAuthCheck:
 
     secret_candidates = _parse_secret_candidates(payload.get("secret_candidates"))
 
+    forge_claims = _parse_forge_claims(payload.get("forge_claims"))
+
     rationale = payload.get("rationale", "")
     rationale = rationale.strip() if isinstance(rationale, str) else ""
 
@@ -211,6 +340,7 @@ def _parse_check(payload: Any) -> BrokenAuthCheck:
         severity=severity,
         public_key=public_key,
         secret_candidates=secret_candidates,
+        forge_claims=forge_claims,
         rationale=rationale,
     )
 
@@ -252,6 +382,7 @@ def parse_broken_auth_policy(payload: Any) -> BrokenAuthPolicy:
         )
 
     principal = _parse_principal(matrix.get("principal"))
+    token_location = _parse_token_location(matrix.get("token_location"))
 
     checks_raw = matrix.get("checks", [])
     if not isinstance(checks_raw, (list, tuple)):
@@ -263,6 +394,7 @@ def parse_broken_auth_policy(payload: Any) -> BrokenAuthPolicy:
             principal=principal,
             checks=(),
             success_statuses=_DEFAULT_SUCCESS_STATUSES,
+            token_location=token_location,
         )
 
     success_statuses = _parse_success_statuses(matrix.get("success_statuses"))
@@ -271,6 +403,7 @@ def parse_broken_auth_policy(payload: Any) -> BrokenAuthPolicy:
         principal=principal,
         checks=checks,
         success_statuses=success_statuses,
+        token_location=token_location,
     )
 
 

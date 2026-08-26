@@ -1,0 +1,21 @@
+{
+  "description": "EXAMPLE broken-authentication (JWT-forgery) matrix for a COOKIE-session app — the shape most PortSwigger JWT labs and real SPAs use. The genuine session token is supplied LIVE and NEVER stored here: pass it via SENTINEL_SESSION_TOKEN (or the operator `token <jwt>` steer) and Sentinel binds it into the declared `token_location` in memory only. This file is pure DATA: WHERE the token rides (a `session` cookie), WHICH route the genuine principal legitimately owns (`control` -> a session-alive probe), and WHICH protected route MUST reject a forged token (`checks[].route`). The pure judge then runs a three-probe differential on the live target — CONTROL (genuine token on the owned route -> MUST succeed, proving the session is live), BREACH (a forged `alg_none` token on the protected route -> the validation-flaw probe), and anonymous BASELINE (no token -> MUST be denied, ruling out a public route). CONFIRMED only when the session is live AND the forged token is accepted AND anonymous is denied — a bare status code is never the verdict, and no token means an honest skip, never a blind guess.",
+  "broken_auth_matrix": {
+    "success_statuses": [200, 201, 204],
+    "token_location": { "kind": "cookie", "name": "session" },
+    "principal": {
+      "name": "wiener",
+      "role": "user",
+      "control": { "method": "GET", "path": "/my-account" }
+    },
+    "checks": [
+      {
+        "forgery": "alg_none",
+        "route": { "method": "GET", "path": "/admin" },
+        "forge_claims": { "sub": "administrator" },
+        "severity": "HIGH",
+        "rationale": "VERTICAL token-validation flaw. A plain user's genuine RS256 session is DENIED at /admin, but if the server accepts an alg=none forgery with sub=administrator the signature is not authentically verified. `forge_claims` declares that escalation target (sub -> administrator) as operator ground truth, baked into the forged payload; the genuine token proves the session is live on /my-account (the control the user owns); the forged token is minted OFFLINE and PURELY by Sentinel from that captured token. The declared claim never fabricates a finding — the pure judge still disposes the live three-probe differential. alg_none is guard-provable, so the durable fix (reject unsigned/alg=none at the gateway or pin the algorithm handler-side) is demonstrable."
+      }
+    ]
+  }
+}

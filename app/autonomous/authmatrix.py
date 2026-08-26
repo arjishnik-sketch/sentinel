@@ -73,17 +73,26 @@ class AuthContext:
 # ---- token injection (broken_auth) ------------------------------------------
 
 def inject_bearer(policy: BrokenAuthPolicy, token: str) -> BrokenAuthPolicy:
-    """Bind a genuine bearer ``token`` as the SOLE authenticator of the matrix's
-    principal — the one credential broken_auth needs, supplied live, never from a
-    file. Mirrors ``session.authenticated._bearer_header``: Authorization only, no
-    cookie, so a route guarded by cookie can never pass the control probe and yield
-    a false positive. An empty token leaves the principal tokenless (honest skip)."""
-    headers = (("Authorization", f"Bearer {token}"),) if token else ()
+    """Bind a genuine ``token`` as the SOLE authenticator of the matrix's principal
+    — the one credential broken_auth needs, supplied live, never from a file. The
+    token rides the app's REAL location, declared by the matrix's ``token_location``
+    (``Authorization: Bearer`` by default, or ``Cookie: <name>=<token>`` for a
+    cookie-session app), so a route authenticated by cookie is provable rather than
+    a guaranteed control-probe failure. The principal's session-alive ``control``
+    route is preserved. An empty token leaves the principal tokenless (honest skip)."""
+    location = getattr(policy, "token_location", None)
     base = policy.principal
+    if token:
+        header = (location.header_for(token) if location is not None
+                  else ("Authorization", f"Bearer {token}"))
+        headers = (header,)
+    else:
+        headers = ()
     principal = BrokenAuthPrincipal(
         name=(base.name if base is not None else "authenticated"),
         headers=headers,
         role=(base.role if base is not None else "user"),
+        control=(base.control if base is not None else None),
     )
     return replace(policy, principal=principal)
 
@@ -195,9 +204,37 @@ def _first_path(*candidates):
     return None
 
 
-def resolve_auth_context(directive=None, *, env=None,
+def _capture_login(login_url, *, username, password, target, location):
+    """Default LIVE login seam: drive a headless HTTP form login and read the
+    session token from the SAME place the matrix declares the app carries it
+    (``location`` — cookie or header). Returns ``(token, note)`` where ``note`` is
+    a presence-only, token-SAFE one-liner. The password is used to fill the live
+    form only — never logged; the captured token's VALUE never enters the note."""
+    from app.security_graph.session.form_login import capture_login_session
+
+    session = capture_login_session(
+        login_url, username=username, password=password, target=target)
+    return session.token_for(location), session.note
+
+
+def _resolve_credentials(directive, env):
+    """The (username, password) to log in with, from the operator directive first,
+    then ``SENTINEL_LOGIN_USERNAME`` / ``SENTINEL_LOGIN_PASSWORD``. Returns ``None``
+    when neither source supplies both. The password is a secret held only here."""
+    creds = getattr(directive, "credentials", None) if directive else None
+    if creds:
+        return creds
+    env_user = env.get("SENTINEL_LOGIN_USERNAME")
+    env_pass = env.get("SENTINEL_LOGIN_PASSWORD")
+    if env_user and env_pass:
+        return (env_user, env_pass)
+    return None
+
+
+def resolve_auth_context(directive=None, *, env=None, target=None,
                          load_broken_auth=load_broken_auth_policy,
-                         load_privesc=load_privesc_policy) -> AuthContext:
+                         load_privesc=load_privesc_policy,
+                         login=_capture_login) -> AuthContext:
     """Resolve matrix policies + token from an OperatorDirective and the environment.
 
     Precedence mirrors ``login``/``investigate``: dedicated env var, then the
@@ -205,11 +242,22 @@ def resolve_auth_context(directive=None, *, env=None,
     loaders each pluck their own section from a combined doc, so one file can carry
     both matrices. A file that fails to load degrades to a token-free note, never a
     crash. The token comes from the operator's ``token`` line or
-    ``SENTINEL_SESSION_TOKEN`` — its VALUE never enters a note."""
+    ``SENTINEL_SESSION_TOKEN`` — its VALUE never enters a note.
+
+    When broken_auth is requested but no token was supplied, and the operator gave
+    credentials (a ``login``/``creds`` directive or ``SENTINEL_LOGIN_USERNAME`` /
+    ``SENTINEL_LOGIN_PASSWORD``), Sentinel CAPTURES a token itself by driving a live
+    login via the ``login`` seam — reading the token from the SAME location the
+    matrix declares. The password fills the live form only; it is never logged, and
+    the captured token's value never enters a note. ``login`` and the loaders are
+    injected seams, so the whole resolution is offline-testable with zero network."""
     env = env if env is not None else os.environ
     matrix_path = getattr(directive, "matrix_path", None) if directive else None
     token = (getattr(directive, "token", None) if directive else None) \
         or (env.get("SENTINEL_SESSION_TOKEN") or None)
+    creds = _resolve_credentials(directive, env)
+    login_url = (getattr(directive, "login_url", None) if directive else None) \
+        or (env.get("SENTINEL_LOGIN_URL") or None)
 
     ba_path = _first_path(env.get("SENTINEL_BROKEN_AUTH_POLICY"), matrix_path,
                           env.get("SENTINEL_ACCESS_POLICY"))
@@ -226,9 +274,28 @@ def resolve_auth_context(directive=None, *, env=None,
         else:
             if getattr(candidate, "checks", ()):
                 ba_policy = candidate
-                notes.append(
-                    f"broken_auth matrix: {len(candidate.checks)} check(s), "
-                    + ("token captured" if token else "NO token — will skip"))
+
+    # broken_auth is requested but tokenless, and the operator supplied credentials:
+    # CAPTURE a genuine token live rather than lean on an external driver. A capture
+    # fault degrades to a token-safe note (never a crash, never a manufactured pass).
+    if ba_policy is not None and not token and creds:
+        username, password = creds
+        location = getattr(ba_policy, "token_location", None)
+        try:
+            token, capture_note = login(
+                login_url, username=username, password=password,
+                target=target, location=location)
+        except Exception as exc:
+            notes.append(f"credential login failed: {type(exc).__name__}")
+        else:
+            # username is identity (safe); the password and token value are NOT.
+            notes.append(f"credential login as {username!r}: {capture_note}")
+
+    # Emitted AFTER the login attempt so it reflects the FINAL token state.
+    if ba_policy is not None:
+        notes.append(
+            f"broken_auth matrix: {len(ba_policy.checks)} check(s), "
+            + ("token captured" if token else "NO token — will skip"))
 
     pe_policy = None
     if pe_path:

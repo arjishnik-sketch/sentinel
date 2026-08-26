@@ -204,6 +204,103 @@ def test_resolve_context_broken_auth_without_token_reports_skip():
     assert any("NO token" in n for n in ctx.notes)
 
 
+# ---- credential-driven token capture (Sentinel logs in itself) --------------
+
+def test_resolve_context_captures_token_from_credentials():
+    seen = {}
+
+    def fake_login(login_url, *, username, password, target, location):
+        seen.update(login_url=login_url, username=username, password=password,
+                    target=target, location=location)
+        return "CAPTURED.JWT.SIG", "captured 1 cookie(s)"
+
+    d = OperatorDirective(credentials=("wiener", "peter"),
+                          login_url="http://shop.test/login", matrix_path="/m.json")
+    ctx = AM.resolve_auth_context(
+        d, env={}, target="http://shop.test", login=fake_login,
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    # a token was CAPTURED live and the class is now active
+    assert ctx.token == "CAPTURED.JWT.SIG"
+    assert ctx.has_broken_auth
+    # the seam saw the real login inputs, incl. the matrix's declared token_location
+    assert seen["username"] == "wiener" and seen["password"] == "peter"
+    assert seen["login_url"] == "http://shop.test/login"
+    assert seen["target"] == "http://shop.test"
+    assert seen["location"] == _ba_policy().token_location  # declared location, forwarded
+
+
+def test_resolve_context_captures_token_from_env_credentials():
+    def fake_login(login_url, *, username, password, target, location):
+        assert (username, password) == ("admin", "hunter2")
+        return "T.O.K", "captured 1 cookie(s)"
+
+    env = {"SENTINEL_LOGIN_USERNAME": "admin", "SENTINEL_LOGIN_PASSWORD": "hunter2",
+           "SENTINEL_BROKEN_AUTH_POLICY": "/m.json"}
+    ctx = AM.resolve_auth_context(
+        None, env=env, target="http://shop.test", login=fake_login,
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    assert ctx.token == "T.O.K" and ctx.has_broken_auth
+
+
+def test_resolve_context_login_note_never_leaks_password_or_token():
+    def fake_login(login_url, *, username, password, target, location):
+        return "SECRET-CAPTURED-JWT", "captured 1 cookie(s)"
+
+    d = OperatorDirective(credentials=("wiener", "s3cr3tP@ss"), matrix_path="/m.json")
+    ctx = AM.resolve_auth_context(
+        d, env={}, target="http://shop.test", login=fake_login,
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    joined = " ".join(ctx.notes)
+    assert "s3cr3tP@ss" not in joined          # password never surfaces
+    assert "SECRET-CAPTURED-JWT" not in joined  # token value never surfaces
+    assert "wiener" in joined                   # username (identity) is safe to show
+    assert "token captured" in joined
+
+
+def test_resolve_context_login_failure_degrades_to_note():
+    def boom(login_url, *, username, password, target, location):
+        raise RuntimeError("no login form")
+
+    d = OperatorDirective(credentials=("wiener", "peter"), matrix_path="/m.json")
+    ctx = AM.resolve_auth_context(
+        d, env={}, target="http://shop.test", login=boom,
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    assert ctx.token is None and not ctx.has_broken_auth
+    assert any("credential login failed" in n for n in ctx.notes)
+    assert any("NO token" in n for n in ctx.notes)  # honest final state
+
+
+def test_resolve_context_explicit_token_skips_credential_login():
+    called = {"n": 0}
+
+    def fake_login(*a, **k):
+        called["n"] += 1
+        return "SHOULD-NOT-BE-USED", "captured"
+
+    d = OperatorDirective(token="dir.tok", credentials=("wiener", "peter"),
+                          matrix_path="/m.json")
+    ctx = AM.resolve_auth_context(
+        d, env={}, target="http://shop.test", login=fake_login,
+        load_broken_auth=lambda p: _ba_policy(), load_privesc=lambda p: PrivEscPolicy())
+    assert ctx.token == "dir.tok"     # the supplied token wins
+    assert called["n"] == 0           # no needless live login when a token exists
+
+
+def test_resolve_context_credentials_without_matrix_do_not_login():
+    called = {"n": 0}
+
+    def fake_login(*a, **k):
+        called["n"] += 1
+        return "X", "captured"
+
+    d = OperatorDirective(credentials=("wiener", "peter"))
+    ctx = AM.resolve_auth_context(
+        d, env={}, target="http://shop.test", login=fake_login,
+        load_broken_auth=lambda p: BrokenAuthPolicy(), load_privesc=lambda p: PrivEscPolicy())
+    # no broken_auth matrix → nothing to forge FROM → never drive a login
+    assert called["n"] == 0 and ctx.token is None
+
+
 # ---- report integration: a matrix CONFIRMED renders as a finding ------------
 
 def test_matrix_confirmed_verdict_renders_in_report():

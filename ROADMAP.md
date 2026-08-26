@@ -348,10 +348,16 @@ mechanism + anchor** (the honesty core), **zero-oracle discovery**, the
   only when control succeeds AND forged token is accepted AND anonymous is denied.
   A forged token rejected (401) → DISPROVED. This is the exact privesc anchor
   pattern, reused verbatim.
-- **Discovery / seeding.** Not URL-only — requires the `login` command's captured
-  session (a real token). In `discover` mode it surfaces as an honest lead
-  ("JWT observed; run `login` to prove token-forgery"). This is the one new class
-  that is intent-adjacent, and it's honestly labeled as login-seeded.
+- **Discovery / seeding.** Not URL-only — requires a *real captured token*.
+  Sentinel captures one **independently, no external driver**: given credentials
+  (`login <user> <pass> [url]` steer / `$SENTINEL_LOGIN_*`) it drives a **headless
+  HTTP form login** (`security_graph.session.form_login`) and reads the token from
+  the location the matrix declares (`Authorization` header or `session` cookie);
+  the interactive browser Login Tester still handles MFA/SPA flows. In `discover`
+  mode it surfaces as an honest lead ("JWT observed; supply creds/token to prove
+  token-forgery"). A **vertical** bypass declares `forge_claims` (e.g.
+  `{"sub":"administrator"}`) as the escalation target — the pure judge still
+  disposes the live differential, so a declared claim never fabricates a finding.
 - **PATCH + PROVE.** `RequestGuardRule` `jwt` family → refuses to forward requests
   bearing a token with `alg=none`/no signature/failed verification → forged token
   denied → judge flips `DISPROVED` while the genuine token still succeeds. Durable
@@ -763,10 +769,10 @@ smart"* — maps onto the existing orchestrator as named stages. Every new stage
 | 3 | PLAN TESTS (hypothesize) | ✅ exists | rule floor + LLM breadth |
 | 4 | SELECT TOOLS | 🔨 new (§11) | technique→tool plan (proposers only) |
 | 5 | PLAN EXECUTION | ✅ shipped | order, concurrency (`SENTINEL_MAX_WORKERS`), rounds; which judges + which approved tools — pure annotation, never a coverage gate |
-| 5b | OPERATOR STEER | ✅ shipped | checkpoint before EXECUTE: the operator is a THIRD proposer — folds `source="operator"` hypotheses via `augment_plan` (same pure judge disposes) + captures token/matrix auth context; silent headless, `SENTINEL_STEER` non-interactive, token value never echoed |
+| 5b | OPERATOR STEER | ✅ shipped | checkpoint before EXECUTE: the operator is a THIRD proposer — folds `source="operator"` hypotheses via `augment_plan` (same pure judge disposes) + captures token/matrix/**credential** auth context; silent headless, `SENTINEL_STEER` non-interactive, token & password never echoed |
 | 6 | EXECUTE | ✅ exists | `run_plan` + approval-gated tool runs |
 | 7 | ANALYSE RESULT | ✅ exists | tiered verdicts (CONFIRMED/DISPROVED/LEAD/INCONCLUSIVE) |
-| 7b | AUTH MATRIX | ✅ shipped | `broken_auth` / `privilege_escalation` prove here (matrix-driven, not single-probe) gated on steered context — same pure `security_graph` judges on a fresh graph, adapted via the single `VALIDATED→CONFIRMED` site; no token in any note; no `FIX_PROVEN` (not in remediation registry) |
+| 7b | AUTH MATRIX | ✅ shipped | `broken_auth` / `privilege_escalation` prove here (matrix-driven, not single-probe) gated on steered context — same pure `security_graph` judges on a fresh graph, adapted via the single `VALIDATED→CONFIRMED` site; broken_auth captures its token **independently** from credentials (headless HTTP form login, no external driver) and honours a `forge_claims` escalation target; no token/password in any note |
 | 8 | FAILURE-CAUSE + RETRY | 🔨 new | on INCONCLUSIVE/suspicious-DISPROVED, an advisory strategist proposes a *different* probe shape (encoding, location, anchor, tool-assist); bounded retries; **re-judged by the SAME pure judge** — never a verdict flip by the strategist |
 | 9 | SOLUTION ANALYSIS | ✅ exists | remediation synthesis + FIX_PROVEN flip |
 | 10 | REPORT | ✅ module shipped · 🔨 CLI-wire pending | per-finding: steps-to-reproduce (real probe requests), proofs (differential+anchor+judge reason+evidence), remediation (patch + proven flip), severity; markdown/JSON |

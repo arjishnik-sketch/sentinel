@@ -107,26 +107,36 @@ def decode_jwt(token: str) -> JwtParts | None:
         signature_seg=signature_seg,
     )
 
-def _marked_payload(payload: dict, marker: str) -> dict:
-    """Return the payload with a benign, unforgeable forgery marker claim."""
+def _marked_payload(payload: dict, marker: str, claims: tuple = ()) -> dict:
+    """Return the payload with operator-declared claim overrides applied, plus a
+    benign, unforgeable forgery marker claim.
+
+    ``claims`` is the check's ``forge_claims`` — the escalation target a VERTICAL
+    bypass forges toward (e.g. ``sub=administrator``). It is declared ground truth,
+    not a secret; the payload keeps the genuine claims verbatim except where an
+    override names one. The marker is always added last so acceptance still proves
+    the server validated a token WE minted rather than merely echoing the original.
+    """
     marked = dict(payload)
+    for key, value in claims:
+        marked[key] = value
     marked["sentinel_forge"] = marker
     return marked
 
 
-def _forge_alg_none(parts: JwtParts, marker: str) -> str:
+def _forge_alg_none(parts: JwtParts, marker: str, claims: tuple = ()) -> str:
     header = dict(parts.header)
     header["alg"] = "none"
-    payload_seg = _encode_segment(_marked_payload(parts.payload, marker))
+    payload_seg = _encode_segment(_marked_payload(parts.payload, marker, claims))
     # alg=none tokens carry an EMPTY signature but keep the trailing dot.
     return f"{_encode_segment(header)}.{payload_seg}."
 
 
-def _forge_unsigned(parts: JwtParts, marker: str) -> str:
+def _forge_unsigned(parts: JwtParts, marker: str, claims: tuple = ()) -> str:
     # Preserve the declared algorithm but drop the signature entirely: a
     # two-part token the shape-guard recognises as missing its signature.
     header = dict(parts.header)
-    payload_seg = _encode_segment(_marked_payload(parts.payload, marker))
+    payload_seg = _encode_segment(_marked_payload(parts.payload, marker, claims))
     return f"{_encode_segment(header)}.{payload_seg}"
 
 
@@ -139,13 +149,13 @@ def _hmac_sign(header: dict, payload: dict, secret: bytes) -> str:
 
 
 def _forge_hs256_confusion(
-    parts: JwtParts, public_key: str, marker: str
+    parts: JwtParts, public_key: str, marker: str, claims: tuple = ()
 ) -> str | None:
     if not public_key.strip():
         return None
     header = dict(parts.header)
     header["alg"] = "HS256"
-    payload = _marked_payload(parts.payload, marker)
+    payload = _marked_payload(parts.payload, marker, claims)
     # RS256→HS256 confusion: use the RSA PUBLIC key bytes as the HMAC secret.
     return _hmac_sign(header, payload, public_key.encode("utf-8"))
 
@@ -169,14 +179,14 @@ def _crack_weak_secret(parts: JwtParts, candidates) -> str | None:
 
 
 def _forge_weak_secret(
-    parts: JwtParts, candidates, marker: str
+    parts: JwtParts, candidates, marker: str, claims: tuple = ()
 ) -> tuple[str | None, str | None]:
     secret = _crack_weak_secret(parts, candidates)
     if secret is None:
         return None, None
     header = dict(parts.header)
     header["alg"] = "HS256"
-    payload = _marked_payload(parts.payload, marker)
+    payload = _marked_payload(parts.payload, marker, claims)
     return _hmac_sign(header, payload, secret.encode("utf-8")), secret
 
 def derive_forgery(
@@ -185,14 +195,18 @@ def derive_forgery(
     *,
     public_key: str = "",
     secret_candidates=(),
+    claims: tuple = (),
     marker: str = "sentinel",
 ) -> ForgeResult:
     """
     Derive a forged token from `genuine_token` per `strategy`.
 
-    Returns a :class:`ForgeResult` whose ``token`` is None when the forgery is
-    not derivable (a non-JWT input, missing material, or a strong secret no
-    candidate cracks) — the caller then seeds no probe, so nothing is claimed.
+    ``claims`` is the check's operator-declared ``forge_claims`` payload override
+    (e.g. the ``sub=administrator`` escalation target) — baked into whichever
+    forgery is derived. Returns a :class:`ForgeResult` whose ``token`` is None when
+    the forgery is not derivable (a non-JWT input, missing material, or a strong
+    secret no candidate cracks) — the caller then seeds no probe, so nothing is
+    claimed.
     """
     guard_provable = strategy in ("alg_none", "unsigned")
     parts = decode_jwt(genuine_token)
@@ -206,16 +220,16 @@ def derive_forgery(
 
     if strategy == "alg_none":
         return ForgeResult(
-            strategy, _forge_alg_none(parts, marker), True,
+            strategy, _forge_alg_none(parts, marker, claims), True,
             note="re-headered alg=none with an empty signature",
         )
     if strategy == "unsigned":
         return ForgeResult(
-            strategy, _forge_unsigned(parts, marker), True,
+            strategy, _forge_unsigned(parts, marker, claims), True,
             note="signature stripped to a two-part token",
         )
     if strategy == "hs256_confusion":
-        token = _forge_hs256_confusion(parts, public_key, marker)
+        token = _forge_hs256_confusion(parts, public_key, marker, claims)
         return ForgeResult(
             strategy, token, False,
             note=(
@@ -225,7 +239,7 @@ def derive_forgery(
             ),
         )
     if strategy == "weak_secret":
-        token, secret = _forge_weak_secret(parts, secret_candidates, marker)
+        token, secret = _forge_weak_secret(parts, secret_candidates, marker, claims)
         return ForgeResult(
             strategy, token, False, cracked_secret=secret,
             note=(

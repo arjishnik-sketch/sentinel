@@ -15,6 +15,13 @@ from .browser_login import (
     is_authenticated_signal,
     reconstruct_set_cookie,
 )
+from .form_login import (
+    CredentialSession,
+    LoginCaptureError,
+    LoginForm,
+    capture_login_session,
+    find_login_form,
+)
 from .authenticated import (
     authenticated_policy,
     broken_auth_policy_from_session,
@@ -33,6 +40,11 @@ __all__ = [
     "cookie_header_from",
     "is_authenticated_signal",
     "reconstruct_set_cookie",
+    "CredentialSession",
+    "LoginCaptureError",
+    "LoginForm",
+    "capture_login_session",
+    "find_login_form",
     "authenticated_policy",
     "broken_auth_policy_from_session",
     "broken_auth_principal_from_session",

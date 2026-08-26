@@ -713,6 +713,8 @@ def _prompt_operator(surface) -> str:
              _C_DIM),
             ("  token <bearer-jwt>                                 genuine session token (secret)\n",
              _C_DIM),
+            ("  login <user> <pass> [login-url]                    capture a token live (secret)\n",
+             _C_DIM),
             ("  matrix <path.json>                                 broken_auth / privesc oracle\n",
              _C_DIM),
             ("  (blank line | go | done)                           run\n", _C_DIM),
@@ -741,6 +743,16 @@ def _steer_panel(directive, *, folded) -> Panel:
     grid.add_row("session token",
                  f"[{_C_OK}]captured[/{_C_OK}]" if directive.token
                  else f"[{_C_DIM}]—[/{_C_DIM}]")
+    # Credentials are equally secret — report presence + the (non-secret) username,
+    # NEVER the password. Sentinel will log in itself to CAPTURE a token.
+    if directive.credentials:
+        grid.add_row("login creds",
+                     f"[{_C_OK}]supplied[/{_C_OK}] "
+                     f"[{_C_DIM}](user {_short(directive.credentials[0], 32)})[/{_C_DIM}]")
+        grid.add_row("login url",
+                     f"[{_C_PRIMARY}]{_short(directive.login_url, 48)}[/{_C_PRIMARY}]"
+                     if directive.login_url
+                     else f"[{_C_DIM}]— (derive <origin>/login)[/{_C_DIM}]")
     grid.add_row("matrix path",
                  f"[{_C_PRIMARY}]{_short(directive.matrix_path, 48)}[/{_C_PRIMARY}]"
                  if directive.matrix_path else f"[{_C_DIM}]—[/{_C_DIM}]")
@@ -749,8 +761,10 @@ def _steer_panel(directive, *, folded) -> Panel:
                      f"[{_C_WARN}]{_short('; '.join(directive.ignored), 60)}[/{_C_WARN}]")
     note = Text(
         "\nThe operator only PROPOSES — folded hypotheses are re-ranked into the "
-        "plan and the SAME pure judge disposes each. Auth context (token/matrix) "
-        "feeds the broken_auth/privesc stage; the token value is never echoed.",
+        "plan and the SAME pure judge disposes each. Auth context (token/creds/"
+        "matrix) feeds the broken_auth/privesc stage; with creds and no token, "
+        "Sentinel logs in itself to capture one. The password and token value are "
+        "never echoed.",
         style=_C_DIM)
     return Panel(
         Group(grid, note),
@@ -832,11 +846,14 @@ def _authmatrix_stage(target, directive, *, resolve=None, run_matrix=None):
     join the main pool. Returns a list of Verdicts (empty when no context). Never
     raises: a judge fault degrades to a note, never a manufactured pass or a crash."""
     from app.autonomous import authmatrix as AM
-    resolve = resolve or AM.resolve_auth_context
     run_matrix = run_matrix or AM.run_auth_matrix
 
     try:
-        context = resolve(directive)
+        # The real resolver takes ``target`` so it can CAPTURE a token via a live
+        # credential login when the operator supplied creds but no token. An
+        # injected test seam keeps the one-positional-arg contract untouched.
+        context = (resolve(directive) if resolve is not None
+                   else AM.resolve_auth_context(directive, target=target))
     except Exception:  # resolution is best-effort; a bad file must not sink the run
         return []
     if not context.active:
@@ -1042,6 +1059,10 @@ def _usage() -> Panel:
         ("  SENTINEL_NO_STEER=1       never prompt for an operator steer (headless)\n", _C_DIM),
         ("  SENTINEL_SESSION_TOKEN    genuine bearer token for the broken_auth "
          "matrix (secret)\n", _C_DIM),
+        ("  SENTINEL_LOGIN_USERNAME / SENTINEL_LOGIN_PASSWORD   creds to CAPTURE a "
+         "token live (password secret)\n", _C_DIM),
+        ("  SENTINEL_LOGIN_URL        login page for the credential capture "
+         "(default: <origin>/login)\n", _C_DIM),
         ("  SENTINEL_BROKEN_AUTH_POLICY / SENTINEL_PRIVESC_POLICY / "
          "SENTINEL_ACCESS_POLICY   matrix files\n", _C_DIM),
         ("  SENTINEL_ENABLE_TOOLS=1   run opt-in proof-assist tools (sqlmap…) as "

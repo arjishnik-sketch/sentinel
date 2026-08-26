@@ -43,7 +43,7 @@ from ..models import (
     Relationship,
     Resource,
 )
-from .broken_auth_policy import BrokenAuthCheck, BrokenAuthPolicy
+from .broken_auth_policy import BrokenAuthCheck, BrokenAuthPolicy, TokenLocation
 from .forge import derive_forgery, strip_bearer
 
 def _join_url(target_base: str, path: str) -> str:
@@ -65,8 +65,12 @@ def broken_auth_target(check: BrokenAuthCheck) -> str:
     return f"broken_auth:{_aspect(check)}"
 
 
-def _genuine_token(headers) -> str:
-    """The bare genuine JWT from a principal's Authorization header, if any."""
+def _genuine_token(headers, location: TokenLocation | None = None) -> str:
+    """The bare genuine token from a principal's declared location (default the
+    ``Authorization: Bearer`` header). A cookie-located token (``session=<jwt>``)
+    is read from the ``Cookie`` header instead — the same place the probes ride."""
+    if location is not None:
+        return location.extract(tuple(headers))
     for name, value in headers:
         if str(name).lower() == "authorization":
             return strip_bearer(value)
@@ -97,11 +101,19 @@ def seed_broken_auth_policy(
     principal = policy.principal
     if principal is None:
         return ()
-    genuine = _genuine_token(principal.headers)
+    location = policy.token_location
+    genuine = _genuine_token(principal.headers, location)
     if not genuine:
         return ()
 
     success_statuses = list(policy.success_statuses)
+
+    # The session-alive control route the genuine token legitimately owns. For a
+    # VERTICAL forgery the genuine token is denied at the breach route, so the
+    # control must prove the session is live against a route the principal really
+    # reaches. Absent a declared control, it falls back to the breach route
+    # itself (same-privilege tampering — the historical behaviour).
+    control = principal.control
 
     for check in policy.checks:
         forge_result = derive_forgery(
@@ -109,6 +121,7 @@ def seed_broken_auth_policy(
             check.forgery,
             public_key=check.public_key,
             secret_candidates=check.secret_candidates,
+            claims=check.forge_claims,
         )
         if forge_result.token is None:
             # No probe is possible without a forged token — skip, never claim.
@@ -151,11 +164,18 @@ def seed_broken_auth_policy(
         )
         graph.add_action(Action(name=aspect))
 
-        # The token is the SOLE authenticator on both probes (no cookie), so a
-        # route guarded by cookie rather than token cannot pass the control probe
-        # and never yields a false positive.
-        control_headers = (("Authorization", f"Bearer {genuine}"),)
-        breach_headers = (("Authorization", f"Bearer {forge_result.token}"),)
+        # The token is the SOLE authenticator on both probes, carried in the
+        # app's real location (Authorization header by default, or a Cookie for
+        # cookie-session apps). The genuine token rides the CONTROL route (a
+        # route the principal owns → session-alive), the forged token rides the
+        # BREACH route. A route the token cannot reach fails the control probe
+        # and the judge returns INCONCLUSIVE rather than a false positive.
+        control_method = control.method if control is not None else check.method
+        control_path = control.path if control is not None else check.path
+        control_url = _join_url(target_base, control_path)
+
+        control_headers = (location.header_for(genuine),)
+        breach_headers = (location.header_for(forge_result.token),)
         control_json = json.dumps([list(pair) for pair in control_headers])
         breach_json = json.dumps([list(pair) for pair in breach_headers])
         success_json = json.dumps(success_statuses)
@@ -171,6 +191,9 @@ def seed_broken_auth_policy(
                     ("guard_provable", "true" if forge_result.guard_provable else "false"),
                     ("control_headers", control_json),
                     ("breach_headers", breach_json),
+                    ("control_method", control_method),
+                    ("control_url", control_url),
+                    ("control_path", control_path),
                     ("breach_method", check.method),
                     ("breach_url", breach_url),
                     ("breach_path", check.path),

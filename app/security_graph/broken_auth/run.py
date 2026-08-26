@@ -176,15 +176,17 @@ def _probe_and_judge(
     identity = hypothesis.identity
     control_headers, breach_headers = _probe_headers(graph, hypothesis)
 
-    # Control: the GENUINE captured token as the SOLE authenticator — MUST be
-    # accepted, proving the route is token-authenticated and the session live.
+    # Control: the GENUINE captured token as the SOLE authenticator, on a route
+    # the principal legitimately OWNS (the session-alive control) — MUST be
+    # accepted, proving the captured session is live. For a same-privilege
+    # forgery the control route IS the breach route (the historical default).
     control_id, control_code = _run_probe(
         graph,
         executor,
         hypothesis,
         tag="control",
-        method=expectation.method,
-        url=expectation.breach_url,
+        method=expectation.control_method,
+        url=expectation.control_url,
         headers=control_headers,
         identity=identity,
     )

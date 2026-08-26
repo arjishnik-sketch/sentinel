@@ -51,6 +51,9 @@ class BrokenAuthExpectation:
     guard_provable: bool
     success_statuses: tuple[int, ...]
     severity: str
+    control_method: str = "GET"
+    control_url: str = ""
+    control_path: str = ""
 
 
 def _decode_statuses(raw: str) -> tuple[int, ...]:
@@ -87,14 +90,20 @@ def broken_auth_expectation(
             and relationship.target == target
         ):
             meta = dict(relationship.metadata)
+            breach_method = meta.get("breach_method", "GET")
+            breach_url = meta.get("breach_url", "")
+            breach_path = meta.get("breach_path", "")
             return BrokenAuthExpectation(
                 forgery=meta.get("forgery", ""),
-                method=meta.get("breach_method", "GET"),
-                breach_url=meta.get("breach_url", ""),
-                breach_path=meta.get("breach_path", ""),
+                method=breach_method,
+                breach_url=breach_url,
+                breach_path=breach_path,
                 guard_provable=meta.get("guard_provable", "") == "true",
                 success_statuses=_decode_statuses(meta.get("success_statuses", "")),
                 severity=meta.get("severity", "HIGH"),
+                control_method=meta.get("control_method", breach_method),
+                control_url=meta.get("control_url", breach_url),
+                control_path=meta.get("control_path", breach_path),
             )
     return None
 
@@ -212,16 +221,17 @@ def judge_broken_auth(
     if not control_ok:
         status = "INCONCLUSIVE"
         reason = (
-            f"control probe (genuine token on {expectation.method} "
-            f"{expectation.breach_path}) returned {control_status}, not a "
-            "success — the route is not proven token-authenticated, so a forged "
-            "result cannot be attributed (no claim made)"
+            f"control probe (genuine token on {expectation.control_method} "
+            f"{expectation.control_path}) returned {control_status}, not a "
+            "success — the session is not proven live, so a forged result "
+            "cannot be attributed (no claim made)"
         )
     elif not breach_granted:
         status = "DISPROVED"
         reason = (
-            f"with the genuine token accepted (control {control_status}), the "
-            f"forged token ({expectation.forgery}) returned {breach_status} on "
+            f"with the genuine session live (control {control_status} on "
+            f"{expectation.control_path}), the forged token "
+            f"({expectation.forgery}) returned {breach_status} on "
             f"{expectation.method} {expectation.breach_path} — token validation "
             "holds; no flaw"
         )
@@ -242,9 +252,10 @@ def judge_broken_auth(
         )
         status = "VALIDATED"
         reason = (
-            f"with the genuine token accepted (control {control_status}), a "
-            f"FORGED token ({expectation.forgery}) was also ACCEPTED "
-            f"{breach_status} on {expectation.method} {expectation.breach_path}"
+            f"with the genuine session live (control {control_status} on "
+            f"{expectation.control_path}), a FORGED token "
+            f"({expectation.forgery}) was ACCEPTED {breach_status} on "
+            f"{expectation.method} {expectation.breach_path}"
             f"{denied_note} — the server accepted a token Sentinel minted, so it "
             "does not authentically verify the token signature"
         )
