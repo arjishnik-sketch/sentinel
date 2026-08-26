@@ -85,6 +85,17 @@ class Hypothesis:
         return (self.technique, self.url, self.param, self.location)
 
     @property
+    def shape(self):
+        """Full probe identity for retry de-duplication — everything the judge's
+        anchor gate and probe builder actually see. Two hypotheses with the same
+        :attr:`key` but different ``success_statuses`` are DIFFERENT probes (the
+        anchor set changes what the differential can measure), so they must not
+        collapse: a login that is both wrong-shape AND non-2xx-baseline is only
+        reached by trying the anchored variant of an already-toggled shape."""
+        return (self.technique, self.url, self.method, self.param,
+                self.location, self.success_statuses)
+
+    @property
     def provable(self) -> bool:
         return TECHNIQUE_ROUTING.get(self.technique) == "differential"
 

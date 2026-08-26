@@ -181,3 +181,79 @@ def test_investigate_produces_tiered_report():
     assert report.confirmed and report.confirmed[0].hypothesis.technique == "sql_injection"
     assert all(v.status != O.VERDICT_ERROR for v in report.verdicts)
 
+
+# ---- adaptive EXECUTE: failure-cause + retry --------------------------------
+
+def _login_plan():
+    from app.autonomous.hypotheses import Hypothesis
+    from app.autonomous.surface import Surface
+    hyp = Hypothesis("sql_injection", "http://shop.test/rest/user/login", "POST",
+                     "email", "body_json", success_statuses=(200, 401, 403))
+    return O.Plan(surface=Surface(target="http://shop.test"), hypotheses=(hyp,))
+
+
+def test_adaptive_confirms_after_shape_toggle_and_replaces_slot():
+    """body_json is INCONCLUSIVE, body_form VALIDATES → the retry supersedes the
+    slot with a CONFIRMED whose hypothesis carries the WINNING shape."""
+    def judge(h, p=None):
+        if h.location == "body_form":
+            return ("VALIDATED", "auth bypass", {"e": 1})
+        return ("INCONCLUSIVE", "judge produced no probe result", None)
+
+    verdicts = O.run_plan_adaptive(_login_plan(), {"sql_injection": judge}, max_rounds=2)
+    assert len(verdicts) == 1                          # count never inflates
+    v = verdicts[0]
+    assert v.status == O.VERDICT_CONFIRMED
+    assert v.hypothesis.location == "body_form"        # the proving shape
+    assert v.detail.startswith("[refined via location body_json→body_form]")
+
+
+def test_adaptive_single_round_is_a_plain_forward_pass():
+    def judge(h, p=None):
+        return ("VALIDATED", "", None) if h.location == "body_form" else ("INCONCLUSIVE", "", None)
+    verdicts = O.run_plan_adaptive(_login_plan(), {"sql_injection": judge}, max_rounds=1)
+    assert verdicts[0].status == O.VERDICT_INCONCLUSIVE  # no retry with max_rounds=1
+
+
+def test_adaptive_never_retries_a_terminal_verdict():
+    calls = []
+
+    def judge(h, p=None):
+        calls.append(h.location)
+        return ("DISPROVED", "escaped", None)
+
+    verdicts = O.run_plan_adaptive(_login_plan(), {"sql_injection": judge}, max_rounds=3)
+    assert verdicts[0].status == O.VERDICT_DISPROVED
+    assert calls == ["body_json"]                      # judged once, never retried
+
+
+def test_adaptive_keeps_original_when_no_variant_improves():
+    def judge(h, p=None):
+        return ("INCONCLUSIVE", "unanchored", None)    # every shape fails to measure
+    verdicts = O.run_plan_adaptive(_login_plan(), {"sql_injection": judge}, max_rounds=3)
+    assert verdicts[0].status == O.VERDICT_INCONCLUSIVE
+    assert verdicts[0].hypothesis.location == "body_json"  # original slot preserved
+
+
+def test_adaptive_inconclusive_upgrades_to_disproved_when_measured():
+    """A measured negative beats an unmeasured one: INCONCLUSIVE→DISPROVED is a
+    strict improvement and supersedes the slot."""
+    def judge(h, p=None):
+        return ("DISPROVED", "escaped", None) if h.location == "body_form" \
+            else ("INCONCLUSIVE", "unanchored", None)
+    verdicts = O.run_plan_adaptive(_login_plan(), {"sql_injection": judge}, max_rounds=2)
+    assert verdicts[0].status == O.VERDICT_DISPROVED
+    assert verdicts[0].hypothesis.location == "body_form"
+
+
+def test_investigate_max_rounds_threads_through():
+    judges = {"sql_injection": (lambda h, p=None:
+                                ("VALIDATED", "", None) if h.location == "body_form"
+                                else ("INCONCLUSIVE", "", None))}
+    plan_recon = _recon([])
+    findings = _findings(logins=["http://shop.test/rest/user/login"])
+    report = O.investigate(plan_recon, findings, judges, use_llm=False, max_rounds=2)
+    # the login SQLi rule-floor poses body_json; the retry toggles to body_form → CONFIRMED
+    assert any(v.status == O.VERDICT_CONFIRMED and v.hypothesis.technique == "sql_injection"
+               for v in report.verdicts)
+

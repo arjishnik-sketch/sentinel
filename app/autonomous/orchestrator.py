@@ -189,11 +189,10 @@ def adjudicate(hyp, judges, *, prober=None):
 
 # ---- EXECUTE: concurrent adjudication over the whole plan --------------------
 
-def run_plan(plan, judges, *, prober=None, max_workers=8, _executor=None):
-    """Adjudicate every hypothesis CONCURRENTLY. Leads/un-wired resolve instantly;
-    provable ones fan out to their pure judges. The returned verdict order mirrors
-    ``plan.hypotheses`` (deterministic) regardless of completion order."""
-    hyps = list(plan.hypotheses)
+def _run_hyps(hyps, judges, *, prober=None, max_workers=8, _executor=None):
+    """Adjudicate a list of hypotheses CONCURRENTLY, returning verdicts in the
+    SAME order (deterministic) regardless of completion order."""
+    hyps = list(hyps)
     if not hyps:
         return []
     workers = max(1, min(max_workers, len(hyps)))
@@ -210,6 +209,69 @@ def run_plan(plan, judges, *, prober=None, max_workers=8, _executor=None):
         if _executor is None:
             ex.shutdown(wait=True)
     return results
+
+
+def run_plan(plan, judges, *, prober=None, max_workers=8, _executor=None):
+    """Adjudicate every hypothesis CONCURRENTLY. Leads/un-wired resolve instantly;
+    provable ones fan out to their pure judges. The returned verdict order mirrors
+    ``plan.hypotheses`` (deterministic) regardless of completion order."""
+    return _run_hyps(plan.hypotheses, judges, prober=prober,
+                     max_workers=max_workers, _executor=_executor)
+
+
+# ---- ADAPTIVE EXECUTE: failure-cause → mutated re-probe → judge disposes ------
+
+# Best-per-slot ordering. A measured negative (DISPROVED) beats an unmeasured
+# INCONCLUSIVE — learning the technique is absent is more honest than "could not
+# measure". CONFIRMED wins outright. LEADs never enter a retryable slot.
+_VERDICT_RANK = {
+    VERDICT_CONFIRMED: 4, VERDICT_DISPROVED: 3,
+    VERDICT_INCONCLUSIVE: 2, VERDICT_ERROR: 1, VERDICT_LEAD: 0,
+}
+
+
+def _verdict_rank(v):
+    return _VERDICT_RANK.get(getattr(v, "status", ""), -1)
+
+
+def run_plan_adaptive(plan, judges, *, prober=None, max_workers=8, max_rounds=2,
+                      diagnose=None, propose_extra=None, _executor=None):
+    """EXECUTE with a bounded FAILURE-CAUSE + RETRY loop.
+
+    Round 0 adjudicates the whole plan (identical to :func:`run_plan`). Then, for
+    up to ``max_rounds - 1`` further rounds, every slot whose best verdict is still
+    non-terminal (INCONCLUSIVE / ERROR) is handed to the failure-cause analyzer,
+    which proposes differently-shaped re-probes; those variants are adjudicated by
+    the SAME pure judges. A variant only ever REPLACES its slot when it ranks
+    strictly higher — so counts never inflate and a CONFIRMED still comes solely
+    from a judge reproducing a differential. Deterministic: verdict order mirrors
+    ``plan.hypotheses`` and identical probe shapes are never re-issued.
+    """
+    from . import refine as REFINE
+    diagnose = diagnose or REFINE.diagnose
+
+    slots = list(run_plan(plan, judges, prober=prober,
+                          max_workers=max_workers, _executor=_executor))
+    if max_rounds <= 1 or not slots:
+        return slots
+
+    tried = {h.shape for h in plan.hypotheses}
+    for _ in range(max_rounds - 1):
+        batch = []          # (slot_index, mutated_hypothesis)
+        for i, v in enumerate(slots):
+            for r in diagnose(v, plan.surface, tried=tried, propose_extra=propose_extra):
+                tried.add(r.hypothesis.shape)
+                batch.append((i, r))
+        if not batch:
+            break
+        verdicts = _run_hyps([r.hypothesis for _i, r in batch], judges,
+                             prober=prober, max_workers=max_workers, _executor=_executor)
+        for (i, r), nv in zip(batch, verdicts):
+            if _verdict_rank(nv) > _verdict_rank(slots[i]):
+                note = f"[refined via {r.mutation}] "
+                slots[i] = Verdict(nv.hypothesis, nv.status,
+                                   detail=note + (nv.detail or ""), evidence=nv.evidence)
+    return slots
 
 
 @dataclass
@@ -234,14 +296,21 @@ class Report:
 
 
 def investigate(recon, findings, judges, *, prober=None, skills_index=None, use_llm=True,
-                transport=None, max_workers=8, max_hyps=64):
+                transport=None, max_workers=8, max_hyps=64, max_rounds=1, propose_extra=None):
     """End-to-end (minus patch/prove + deploy gate, which are the CLI's job):
-    build the plan, then adjudicate it concurrently into a tiered report."""
+    build the plan, then adjudicate it concurrently into a tiered report.
+
+    ``max_rounds > 1`` enables the FAILURE-CAUSE + RETRY loop (see
+    :func:`run_plan_adaptive`); the default of 1 is a single forward pass."""
     plan = build_plan(
         recon, findings, skills_index=skills_index, use_llm=use_llm,
         transport=transport, max_hyps=max_hyps,
     )
-    verdicts = run_plan(plan, judges, prober=prober, max_workers=max_workers)
+    if max_rounds > 1:
+        verdicts = run_plan_adaptive(plan, judges, prober=prober, max_workers=max_workers,
+                                     max_rounds=max_rounds, propose_extra=propose_extra)
+    else:
+        verdicts = run_plan(plan, judges, prober=prober, max_workers=max_workers)
     return Report(plan=plan, verdicts=tuple(verdicts))
 
 
